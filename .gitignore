@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Excel/Data
+data/~$*
+data/*.xlsx
+!data/MD_street Names.xlsx
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Scraper Logs/Debug
+docs/*.html
+*.log
+debug_*.html
