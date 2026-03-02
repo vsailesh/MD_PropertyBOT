@@ -60,7 +60,21 @@ if not os.path.exists(DATA_FILE):
 @st.cache_data(ttl=60) # Refresh every minute while background script runs
 def load_data(file):
     df = pd.read_excel(file)
-    # Ensure coordinates are numeric
+    
+    # 1. CLEANING: Drop rows that are just headers or technical names (just in case)
+    technical_names = ['owner_name', 'address', 'street_name', 'Street_name']
+    for col in df.columns:
+        df = df[~df[col].astype(str).isin(technical_names)]
+
+    # 2. FORMATTING: Title Case for names and addresses (makes them look accurate/professional)
+    if 'owner_name' in df.columns:
+        df['owner_name'] = df['owner_name'].astype(str).str.title()
+    if 'address' in df.columns:
+        df['address'] = df['address'].astype(str).str.title()
+    if 'county' in df.columns:
+        df['county'] = df['county'].astype(str).str.title()
+
+    # 3. COORDINATES: Ensure numeric
     if 'latitude' in df.columns and 'longitude' in df.columns:
         df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
         df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
@@ -181,7 +195,12 @@ try:
 
     # Data Table
     st.subheader("📋 Property Details")
-    st.dataframe(filtered_df[['owner_name', 'address', 'county', 'sub_category']], use_container_width=True)
+    
+    # Display table with pretty headers
+    display_df = filtered_df[['owner_name', 'address', 'county', 'sub_category']].copy()
+    display_df.columns = ["Owner Name", "Property Address", "County", "Category"]
+    
+    st.dataframe(display_df, use_container_width=True)
 
     # Refresh Button
     if st.button("🔄 Refresh Data"):
