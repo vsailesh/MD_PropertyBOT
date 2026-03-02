@@ -9,6 +9,8 @@ venv/
 data/~$*
 data/*.xlsx
 !data/MD_street Names.xlsx
+!data/Hindu_Origin_Owners.xlsx
+!data/Hindu_Origin_Owners_Mapped.xlsx
 
 # IDEs
 .vscode/
