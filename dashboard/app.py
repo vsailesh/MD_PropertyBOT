@@ -7,18 +7,41 @@ st.set_page_config(page_title="Maryland Hindu Property Owners", layout="wide", p
 
 st.markdown("""
 <style>
-    .main {
+    /* Main background and text */
+    .stApp {
         background-color: #0e1117;
-        color: white;
+        color: #ffffff !important;
     }
-    .stMetric {
+    
+    /* Metrics Styling */
+    [data-testid="stMetric"] {
         background-color: #1e2130;
-        padding: 15px;
-        border-radius: 10px;
+        padding: 20px;
+        border-radius: 12px;
         border: 1px solid #3e4461;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+    
+    [data-testid="stMetricLabel"] {
+        color: #ccd0d8 !important;
+        font-weight: 600 !important;
+        font-size: 16px !important;
+    }
+    
+    [data-testid="stMetricValue"] {
+        color: #ffffff !important;
+        font-weight: 800 !important;
+    }
+
+    /* Headers */
     h1, h2, h3 {
         color: #ff4b4b !important;
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Sidebar text fix */
+    .css-1d391kg {
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
