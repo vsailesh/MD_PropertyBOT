@@ -3,7 +3,7 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.community_pipeline import CommunityAddressFetcher
+from src.community_pipeline import CommunityAddressFetcher, SDATFormatter
 
 def expand_street_names():
     FILE_PATH = "data/MD_street Names.xlsx"
@@ -25,88 +25,64 @@ def expand_street_names():
         try:
             results_df = pd.read_excel(results_file)
             if 'address' in results_df.columns:
-                # Helper to clean/extract street name
-                import re
-                def get_st(a):
+                def get_st_norm(a):
                     if not a or pd.isna(a): return ""
-                    s = str(a).strip().upper()
-                    name = re.sub(r'^\d+\s+', '', s)
-                    return name.strip()
+                    return SDATFormatter.format_address(str(a))['street_name']
                 
-                searched_streets = set(results_df['address'].apply(get_st).unique())
-                print(f"📊 Found {len(searched_streets)} unique streets already processed.")
+                searched_streets = set(results_df['address'].apply(get_st_norm).unique())
+                searched_streets.discard("")
+                print(f"📊 Found {len(searched_streets)} unique normalized streets already processed.")
         except Exception as e:
             print(f"⚠️ Warning: Could not load results file for filtering: {e}")
 
-    # Target areas with coordinates
-    targets = [
-        # Howard County
-        ("Columbia", 39.2156, -76.8582, "Howard"),
-        ("Ellicott City", 39.2673, -76.7983, "Howard"),
-        # Anne Arundel County
-        ("Annapolis", 38.9784, -76.4922, "Anne Arundel"),
-        ("Glen Burnie", 39.1632, -76.6172, "Anne Arundel"),
-        # Prince George's County
-        ("Bowie", 39.0068, -76.7791, "Prince George's"),
-        ("Laurel", 39.0993, -76.8483, "Prince George's"),
-        ("Greenbelt", 39.0046, -76.8755, "Prince George's"),
-        # Montgomery County
-        ("Silver Spring", 38.9907, -77.0261, "Montgomery"),
-        ("Bethesda", 38.9847, -77.0947, "Montgomery"),
-        ("Germantown", 39.1732, -77.2717, "Montgomery"),
-        ("Rockville", 39.0840, -77.1528, "Montgomery"),
-        ("Gaithersburg", 39.1434, -77.2014, "Montgomery"),
-        # Frederick County
-        ("Frederick", 39.4143, -77.4105, "Frederick"),
-        # Charles County
-        ("Waldorf", 38.6246, -76.8822, "Charles"),
-        # Harford County
-        ("Bel Air", 39.5359, -76.3483, "Harford"),
-        # Baltimore County
-        ("Towson", 39.4015, -76.6019, "Baltimore County"),
-        # More Howard/AA
-        ("Elkridge", 39.2140, -76.7083, "Howard"),
-        ("Odenton", 39.1026, -76.6997, "Anne Arundel"),
-        ("Severna Park", 39.0837, -76.5508, "Anne Arundel")
+    # Comprehensive list of all 24 Maryland jurisdictions (23 counties + 1 city)
+    counties = [
+        "Allegany", "Anne Arundel", "Baltimore City", "Baltimore County", 
+        "Calvert", "Caroline", "Carroll", "Cecil", "Charles", "Dorchester", 
+        "Frederick", "Garrett", "Harford", "Howard", "Kent", "Montgomery", 
+        "Prince George's", "Queen Anne's", "Saint Mary's", "Somerset", 
+        "Talbot", "Washington", "Wicomico", "Worcester"
     ]
     
     import time
     new_data = []
     
-    for name, lat, lon, county in targets:
-        print(f"\n🏘️ Fetching from {name}, {county}...")
+    for county in counties:
+        # Normalize county name for Osm/Display
+        display_name = county if "County" in county or "City" in county else f"{county} County"
+        print(f"\n🌍 Thorough Sweep: {display_name}...")
+        
         try:
-            # Fetch up to 500 random addresses within 2 miles of the center
-            # Limit of 500 ensures we get a broad set while staying safe
-            addresses = fetcher.fetch_radius_addresses(lat, lon, radius_miles=2.0, limit=500)
+            # Fetch ALL unique street names for the entire jurisdiction
+            streets = fetcher.fetch_county_streets(county)
             
-            import re
-            def get_st_internal(a):
-                s = str(a).strip().upper()
-                return re.sub(r'^\d+\s+', '', s).strip()
-
             filtered_count = 0
-            for addr in addresses:
-                st_name = get_st_internal(addr['address'])
-                if st_name in searched_streets:
+            added_in_this_jurisdiction = 0
+            
+            for st_name in streets:
+                # Extract normalized street name for duplicate check
+                st_normalized = SDATFormatter.format_address(st_name)['street_name']
+                
+                if not st_normalized or st_normalized in searched_streets:
                     filtered_count += 1
                     continue
                     
                 new_data.append({
-                    'Address': addr['address'],
-                    'county': county # Use the target county as provisional
+                    'Address': st_normalized,
+                    'county': display_name
                 })
+                added_in_this_jurisdiction += 1
             
-            if filtered_count > 0:
-                print(f"🛡️  Filtered {filtered_count} addresses already present in results.")
+            print(f"📊 {display_name}: Added {added_in_this_jurisdiction} unique streets, Filtered {filtered_count} existing/redundant.")
             
-            # Mandated sleep between targets to avoid rate limiting
-            if name != targets[-1][0]:
-                print(f"⏳ Cooling down for 5s...")
-                time.sleep(5)
+            # Mandated sleep between jurisdictions to avoid platform pressure
+            if county != counties[-1]:
+                wait_time = 15
+                print(f"⏳ Cooling down for {wait_time}s...")
+                time.sleep(wait_time)
                 
         except Exception as e:
-            print(f"❌ Error fetching for {name}: {e}")
+            print(f"❌ Error fetching for {county}: {e}")
             time.sleep(10)
 
     if not new_data:

@@ -135,7 +135,7 @@ class CommunityAddressFetcher:
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
         })
 
-    def fetch_community_addresses(self, community: str, county: str, limit: int = 500) -> List[Dict]:
+    def fetch_community_addresses(self, community: str, county: str, limit: int = 10000) -> List[Dict]:
         """
         Fetch ALL addresses for a community.
 
@@ -246,6 +246,72 @@ class CommunityAddressFetcher:
 
         except Exception as e:
             print(f"❌ Error: {e}")
+
+    def fetch_county_streets(self, county: str) -> List[str]:
+        """Fetch all unique street names for an entire county using OpenStreetMap."""
+        # Maryland counties in OSM are usually admin_level 6
+        osm_county = county if "County" in county or "City" in county else f"{county} County"
+        if county.lower() == "baltimore city": osm_county = "Baltimore City"
+        
+        # Exhaustive query: Get named highways AND elements with address:street tags
+        query = f"""
+        [out:json][timeout:360];
+        area["name"="{osm_county}"]["admin_level"="6"]->.searchArea;
+        (
+          way["highway"]["name"](area.searchArea);
+          way["addr:street"](area.searchArea);
+          node["addr:street"](area.searchArea);
+          relation["addr:street"](area.searchArea);
+        );
+        out tags;
+        """
+        
+        overpass_url = "https://overpass-api.de/api/interpreter"
+        print(f"🌍 Thorough Harvesting: {osm_county}...")
+        
+        try:
+            # Simple retry with exponential backoff for 429/504
+            max_retries = 3
+            response = None
+            for attempt in range(max_retries):
+                try:
+                    response = self.session.post(overpass_url, data={'data': query}, timeout=370)
+                    if response.status_code == 200: break
+                    if response.status_code in (429, 504):
+                        wait_sec = 60 * (attempt + 1)
+                        print(f"🚦 Busy/Rate limited ({response.status_code}). Waiting {wait_sec}s...")
+                        time.sleep(wait_sec)
+                except (requests.exceptions.Timeout, requests.exceptions.RequestException):
+                    time.sleep(10)
+
+            if not response or response.status_code != 200:
+                print(f"❌ Overpass error: {response.status_code if response else 'Timeout'}")
+                return []
+
+            data = response.json()
+            elements = data.get('elements', [])
+            
+            streets = set()
+            for el in elements:
+                tags = el.get('tags', {})
+                # Priority 1: Address tags (usually more accurate for searches)
+                if 'addr:street' in tags:
+                    streets.add(tags['addr:street'])
+                # Priority 2: Highway names
+                elif 'name' in tags and 'highway' in tags:
+                    streets.add(tags['name'])
+            
+            # Filter out any non-text or extremely short artifacts
+            unique_streets = [s for s in streets if s and len(s) > 2 and not s.isdigit()]
+            unique_streets = sorted(list(set(unique_streets)))
+            
+            print(f"✅ Found {len(unique_streets)} unique street names in {osm_county}")
+            return unique_streets
+            
+        except Exception as e:
+            print(f"❌ Error fetching county streets: {e}")
+            return []
+
     def fetch_laurel_area_addresses(self, limit: int = 100) -> List[Dict]:
         """Fetch addresses in the Laurel area using a bounding box."""
         # Laurel area bounding box (approx covering 4 counties intersection)
@@ -312,7 +378,7 @@ class CommunityAddressFetcher:
             print(f"❌ Error: {e}")
             return []
             
-    def fetch_radius_addresses(self, lat: float, lon: float, radius_miles: float, limit: int = 500) -> List[Dict]:
+    def fetch_radius_addresses(self, lat: float, lon: float, radius_miles: float, limit: int = 10000) -> List[Dict]:
         """Fetch addresses within a radius (miles) of a point with retry logic."""
         # Convert miles to meters
         radius_meters = radius_miles * 1609.34

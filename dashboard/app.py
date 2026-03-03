@@ -3,7 +3,7 @@ import pandas as pd
 import pydeck as pdk
 import os
 
-st.set_page_config(page_title="Maryland Hindu Property Owners", layout="wide", page_icon="🏠")
+st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_icon="🏠")
 
 st.markdown("""
 <style>
