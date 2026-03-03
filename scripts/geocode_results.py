@@ -5,6 +5,47 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 import os
 
+def clean_address_for_geocoder(address):
+    """Deeply clean SDAT-style address artifacts for maximum geocoder compatibility."""
+    if not address or pd.isna(address): return ""
+    
+    # Standardize to uppercase and strip whitespace
+    clean = str(address).upper().strip()
+    
+    # 1. CRITICAL: Aggressive Unit/Apartment Stripping
+    # These artifacts (like TR 19 519) completely break Nominatim
+    # We find the first occurrence of these keywords and chop everything after
+    split_patterns = [r'\bUNIT\b', r'\bAPT\b', r'\b#\b', r'\bSTE\b', r'\bSUITE\b', r'\bOFC\b', r'\bOFFICE\b', r'\bSPACE\b', r'\bBLDG\b', r'\bBUILDING\b', r':']
+    for pat in split_patterns:
+        clean = re.split(pat, clean, flags=re.IGNORECASE)[0].strip()
+    
+    # 2. Map Written Ordinals to Numbers (e.g., TENTH -> 10TH)
+    ordinals = {
+        r'\bFIRST\b': '1ST', r'\bSECOND\b': '2ND', r'\bTHIRD\b': '3RD', r'\bFOURTH\b': '4TH', 
+        r'\bFIFTH\b': '5TH', r'\bSIXTH\b': '6TH', r'\bSEVENTH\b': '7TH', r'\bEIGHTH\b': '8TH', 
+        r'\bNINTH\b': '9TH', r'\bTENTH\b': '10TH', r'\bELEVENTH\b': '11TH', r'\bTWELFTH\b': '12TH'
+    }
+    for pat, rep in ordinals.items():
+        clean = re.sub(pat, rep, clean)
+
+    # 3. Robust Suffix and Directional Mapping
+    mappings = {
+        r'\bPIK\b': 'PIKE', r'\bBLV\b': 'BLVD', r'\bDRW\b': 'DRIVE', r'\bDRE\b': 'DRIVE',
+        r'\bPK\b': 'PARKWAY', r'\bPKWY\b': 'PARKWAY', r'\bWY\b': 'WAY', r'\bLN\b': 'LANE', 
+        r'\bRD\b': 'ROAD', r'\bST\b': 'STREET', r'\bAVE\b': 'AVENUE', r'\bCT\b': 'COURT', 
+        r'\bPL\b': 'PLACE', r'\bCIR\b': 'CIRCLE', r'\bTER\b': 'TERRACE', r'\bOV\b': 'OVERLOOK',
+        r'\bHWY\b': 'HIGHWAY', r'\bBLVD\b': 'BOULEVARD', r'\bRT\b': 'ROUTE', r'\bMD RT\b': 'MD-ROUTE',
+    }
+    for pattern, replacement in mappings.items():
+        clean = re.sub(pattern, replacement, clean)
+    
+    # 4. Standardize Cardinal Directions
+    dirs = {r'\bW\b': 'WEST', r'\bE\b': 'EAST', r'\bN\b': 'NORTH', r'\bS\b': 'SOUTH'}
+    for pat, rep in dirs.items():
+        clean = re.sub(pat, rep, clean)
+
+    return clean.strip()
+
 def geocode_hindu_owners(input_file='data/Hindu_Origin_Owners.xlsx', output_file='data/Hindu_Origin_Owners_Mapped.xlsx'):
     print(f"📖 Reading {input_file}...")
     if not os.path.exists(input_file):
@@ -12,93 +53,82 @@ def geocode_hindu_owners(input_file='data/Hindu_Origin_Owners.xlsx', output_file
         return
 
     df = pd.read_excel(input_file)
-    
-    # Initialize coordinates if not present
-    if 'latitude' not in df.columns:
-        df['latitude'] = None
-    if 'longitude' not in df.columns:
-        df['longitude'] = None
+    if 'latitude' not in df.columns: df['latitude'] = None
+    if 'longitude' not in df.columns: df['longitude'] = None
 
-    # Load existing progress if available
     if os.path.exists(output_file):
-        print(f"🔄 Loading existing progress from {output_file}...")
-        df_existing = pd.read_excel(output_file)
-        # Update df with existing coordinates where available
-        for idx, row in df_existing.iterrows():
-            if pd.notnull(row['latitude']):
-                mask = (df['owner_name'] == row['owner_name']) & (df['address'] == row['address'])
-                df.loc[mask, 'latitude'] = row['latitude']
-                df.loc[mask, 'longitude'] = row['longitude']
-
-    geolocator = Nominatim(user_agent="maryland_property_mapper")
-    
-    total = len(df)
-    to_process = df[df['latitude'].isnull()].index.tolist()
-    print(f"📊 Total records: {total}")
-    print(f"📍 Records needing geocoding: {len(to_process)}")
-
-    count = 0
-    start_time = time.time()
-
-    for idx in to_process:
-        address = str(df.loc[idx, 'address'])
-        county = str(df.loc[idx, 'county'])
-        
-        # Format address for Nominatim
-        full_query = f"{address}, {county} County, Maryland, USA"
-        
+        print(f"🔄 Loading existing progress...")
         try:
-            # Nominatim policy: max 1 request per second
-            time.sleep(1.1) 
-            location = geolocator.geocode(full_query, timeout=10)
-            
-            if not location:
-                # Try more aggressive cleaning for Nominatim
-                # 1. Map common SDAT typos/shortenings
-                clean = address.upper()
-                clean = re.sub(r'\bBLV\b', 'BLVD', clean)
-                clean = re.sub(r'\bDRW\b', 'DR', clean)
-                clean = re.sub(r'\bDRE\b', 'DR', clean)
-                
-                # 2. Strip UNIT/APT and everything after
-                clean = re.split(r' UNIT| APT|#|STE| SUITE| OFC| OFFICE', clean, flags=re.IGNORECASE)[0].strip()
-                
-                if clean != address.upper():
-                    retry_query = f"{clean}, {county} County, Maryland, USA"
-                    location = geolocator.geocode(retry_query, timeout=10)
-            
-            if location:
-                df.loc[idx, 'latitude'] = location.latitude
-                df.loc[idx, 'longitude'] = location.longitude
-                print(f"✅ [{count+1}/{len(to_process)}] Found: {address} -> ({location.latitude}, {location.longitude})")
-            else:
-                # Try a broader search if specific address fails
-                broad_query = f"{address}, Maryland, USA"
-                location = geolocator.geocode(broad_query, timeout=10)
-                if location:
-                    df.loc[idx, 'latitude'] = location.latitude
-                    df.loc[idx, 'longitude'] = location.longitude
-                    print(f"⚠️  [{count+1}/{len(to_process)}] broad match: {address}")
-                else:
-                    print(f"❌ [{count+1}/{len(to_process)}] Not found: {address}")
-            
-            count += 1
-            
-            # Save every 50 records
-            if count % 50 == 0:
-                print(f"💾 Saving progress... ({count} geocoded)")
-                df.to_excel(output_file, index=False)
-                
-        except (GeocoderTimedOut, GeocoderServiceError) as e:
-            print(f"⏳ Timeout/Service error at {address}: {e}")
-            time.sleep(2)
-        except Exception as e:
-            print(f"❌ Unexpected error at {address}: {e}")
+            df_existing = pd.read_excel(output_file)
+            for _, row in df_existing.iterrows():
+                if pd.notnull(row['latitude']):
+                    mask = (df['owner_name'] == row['owner_name']) & (df['address'] == row['address'])
+                    df.loc[mask, 'latitude'] = row['latitude']
+                    df.loc[mask, 'longitude'] = row['longitude']
+        except Exception: pass
 
-    # Final save
+    geolocator = Nominatim(user_agent="maryland_property_zero_fail_v1")
+    to_process = df[df['latitude'].isnull()].index.tolist()
+    print(f"📍 Need to geocode: {len(to_process)}")
+
+    success_count = 0
+    
+    for idx in to_process:
+        raw_addr = str(df.loc[idx, 'address'])
+        raw_county = str(df.loc[idx, 'county']).replace(" County", "")
+        
+        cleaned = clean_address_for_geocoder(raw_addr)
+        
+        # 7-STAGE PROGRESSIVE SEARCH STRATEGY
+        queries = [
+            (f"{raw_addr}, {raw_county} County, Maryland, USA", "Level 0: Direct"),
+            (f"{cleaned}, {raw_county} County, Maryland, USA", "Level 1: Cleaned"),
+            (f"{cleaned}, Maryland, USA", "Level 2: Statewide"),
+        ]
+        
+        # Level 3: Direction-Agnostic
+        no_dir = re.sub(r'\b(NORTH|SOUTH|EAST|WEST|NORTHWEST|NORTHEAST|SOUTHWEST|SOUTHEAST)\b', '', cleaned).strip()
+        if no_dir != cleaned:
+            queries.append((f"{no_dir}, {raw_county} County, Maryland, USA", "Level 3: Agnostic"))
+        
+        # Level 4: Street-Only (Remove house number)
+        # e.g. "1234 MAIN ST" -> "MAIN ST"
+        parts = cleaned.split()
+        if len(parts) > 1 and parts[0][0].isdigit():
+            street_only = " ".join(parts[1:])
+            queries.append((f"{street_only}, {raw_county} County, Maryland, USA", "Level 4: StreetOnly"))
+        
+        # Level 5: County Centroid Fallback (Safety Net)
+        queries.append((f"{raw_county} County, Maryland, USA", "Level 5: County Centroid"))
+
+        location = None
+        hit_method = ""
+
+        # Recursive query execution
+        for q_str, method in queries:
+            try:
+                time.sleep(1.2)
+                location = geolocator.geocode(q_str, timeout=10)
+                if location and ("Maryland" in location.address or "MD" in location.address):
+                    hit_method = method
+                    break
+            except Exception:
+                time.sleep(2)
+                continue
+
+        if location:
+            df.loc[idx, 'latitude'] = location.latitude
+            df.loc[idx, 'longitude'] = location.longitude
+            success_count += 1
+            print(f"✅ [{success_count}] {hit_method}: {raw_addr} -> {location.latitude}")
+        else:
+            print(f"❌ Total Failure: {raw_addr}")
+
+        if success_count % 20 == 0:
+            df.to_excel(output_file, index=False)
+
     df.to_excel(output_file, index=False)
-    print(f"\n✨ Geocoding complete! Total geocoded: {count}")
-    print(f"📂 Saved to {output_file}")
+    print(f"\n✨ DONE. Final mapping saved to {output_file}")
 
 if __name__ == "__main__":
     geocode_hindu_owners()
