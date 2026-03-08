@@ -126,23 +126,58 @@ try:
         st.write(df.columns.tolist())
     else:
         # Sidebar Filters
-        st.sidebar.header("🔍 Filters")
-        counties = sorted(df[county_col].unique().tolist())
-        selected_county = st.sidebar.multiselect("Select County", counties, default=counties)
-
+        st.sidebar.header("🔍 Interactive Filters")
+        
+        # 1. Global Search
+        search_query = st.sidebar.text_input("Search by Owner or Address", "").strip().lower()
+        
+        # 2. County Filter
+        counties = sorted(df[county_col].unique().astype(str).tolist())
+        selected_county = st.sidebar.multiselect("Select Counties", counties, default=counties)
+        
+        # 3. Category Filter
+        categories = []
+        if cat_col in df.columns:
+            categories = sorted(df[cat_col].unique().astype(str).tolist())
+            selected_cat = st.sidebar.multiselect("Select Categories", categories, default=categories)
+        
         # Filter Data
-        filtered_df = df[df[county_col].isin(selected_county)]
+        mask = df[county_col].astype(str).isin(selected_county)
+        
+        if categories:
+            mask = mask & df[cat_col].astype(str).isin(selected_cat)
+            
+        if search_query:
+            mask = mask & (
+                df[owner_col].astype(str).str.lower().str.contains(search_query) | 
+                df[addr_col].astype(str).str.lower().str.contains(search_query)
+            )
+            
+        filtered_df = df[mask]
+
+        # 4. Download Button
+        st.sidebar.markdown("---")
+        csv = filtered_df.to_csv(index=False).encode('utf-8')
+        st.sidebar.download_button(
+            label="📥 Export Filtered Data (CSV)",
+            data=csv,
+            file_name="maryland_property_export.csv",
+            mime="text/csv",
+        )
 
         # Summary Metrics
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Owners", f"{len(df):,}")
+            st.metric("Filtered Properties", f"{len(filtered_df):,}")
         with col2:
             mapped_count = filtered_df[lat_col].notnull().sum() if lat_col in filtered_df.columns else 0
-            st.metric("Mapped Properties", f"{mapped_count:,}")
+            st.metric("Mapped Geolocations", f"{mapped_count:,}")
         with col3:
-            top_county = filtered_df[county_col].value_counts().idxmax() if not filtered_df.empty else "N/A"
-            st.metric("Top County", top_county)
+            if not filtered_df.empty:
+                top_cat = filtered_df[cat_col].value_counts().idxmax() if cat_col in filtered_df.columns else "N/A"
+                st.metric("Top Category", top_cat)
+            else:
+                st.metric("Top Category", "N/A")
 
         # Map Section
         st.subheader("📍 Property Distribution & County Boundaries")
