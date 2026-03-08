@@ -60,151 +60,225 @@ if not os.path.exists(DATA_FILE):
 @st.cache_data(ttl=60) # Refresh every minute while background script runs
 def load_data(file):
     df = pd.read_excel(file)
-    
+
     # 1. CLEANING: Drop rows that are just headers or technical names (just in case)
-    technical_names = ['owner_name', 'address', 'street_name', 'Street_name']
+    technical_names = ['owner_name', 'address', 'street_name', 'Street_name', 'Owner Name', 'Address', 'Street Name']
     for col in df.columns:
         df = df[~df[col].astype(str).isin(technical_names)]
 
-    # 2. FORMATTING: Title Case for names and addresses (makes them look accurate/professional)
-    if 'owner_name' in df.columns:
-        df['owner_name'] = df['owner_name'].astype(str).str.title()
-    if 'address' in df.columns:
-        df['address'] = df['address'].astype(str).str.title()
-    if 'county' in df.columns:
-        df['county'] = df['county'].astype(str).str.title()
+    # 2. Normalize column names - detect actual columns
+    # Map common column name variations
+    col_mapping = {}
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if 'owner' in col_lower and 'name' in col_lower:
+            col_mapping['owner_name'] = col
+        elif col_lower == 'address' or col_lower == 'addr':
+            col_mapping['address'] = col
+        elif col_lower == 'county':
+            col_mapping['county'] = col
+        elif col_lower == 'latitude' or col_lower == 'lat':
+            col_mapping['latitude'] = col
+        elif col_lower == 'longitude' or col_lower == 'lon' or col_lower == 'long':
+            col_mapping['longitude'] = col
+        elif 'category' in col_lower or 'sub_category' in col_lower:
+            col_mapping['sub_category'] = col
 
-    # 3. COORDINATES: Ensure numeric
-    if 'latitude' in df.columns and 'longitude' in df.columns:
-        df['latitude'] = pd.to_numeric(df['latitude'], errors='coerce')
-        df['longitude'] = pd.to_numeric(df['longitude'], errors='coerce')
+    df.columns = df.columns.astype(str)  # Ensure column names are strings
+
+    # 3. FORMATTING: Title Case for names and addresses
+    if 'owner_name' in col_mapping:
+        df[col_mapping['owner_name']] = df[col_mapping['owner_name']].astype(str).str.title()
+    if 'address' in col_mapping:
+        df[col_mapping['address']] = df[col_mapping['address']].astype(str).str.title()
+    if 'county' in col_mapping:
+        df[col_mapping['county']] = df[col_mapping['county']].astype(str).str.title()
+
+    # 4. COORDINATES: Ensure numeric
+    if 'latitude' in col_mapping and 'longitude' in col_mapping:
+        df[col_mapping['latitude']] = pd.to_numeric(df[col_mapping['latitude']], errors='coerce')
+        df[col_mapping['longitude']] = pd.to_numeric(df[col_mapping['longitude']], errors='coerce')
+
+    # Store column mapping for later use
+    df.attrs['col_mapping'] = col_mapping
     return df
 
 try:
     df = load_data(DATA_FILE)
-    
-    # Sidebar Filters
-    st.sidebar.header("🔍 Filters")
-    counties = sorted(df['county'].unique().tolist())
-    selected_county = st.sidebar.multiselect("Select County", counties, default=counties)
-    
-    # Filter Data
-    filtered_df = df[df['county'].isin(selected_county)]
-    
-    # Summary Metrics
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Owners", f"{len(df):,}")
-    with col2:
-        mapped_count = filtered_df['latitude'].notnull().sum() if 'latitude' in filtered_df.columns else 0
-        st.metric("Mapped Properties", f"{mapped_count:,}")
-    with col3:
-        top_county = filtered_df['county'].value_counts().idxmax() if not filtered_df.empty else "N/A"
-        st.metric("Top County", top_county)
+    col_mapping = df.attrs.get('col_mapping', {})
 
-    # Map Section
-    st.subheader("📍 Property Distribution & County Boundaries")
-    
-    map_df = filtered_df.dropna(subset=['latitude', 'longitude'])
-    
-    # Load County Boundaries
-    COUNTY_GEOJSON = 'data/maryland-counties.geojson'
-    geojson_data = None
-    if os.path.exists(COUNTY_GEOJSON):
-        import json
-        with open(COUNTY_GEOJSON, 'r') as f:
-            geojson_data = json.load(f)
+    # Helper function to get actual column name
+    def get_col(mapped_name):
+        return col_mapping.get(mapped_name, mapped_name)
 
-    layers = []
-    
-    # 1. Base Layer: Standard OpenStreetMap (OSM) Tiles
-    # This provides the "Google Maps" look with highways, routes, and building footprints
-    layers.append(pdk.Layer(
-        "TileLayer",
-        data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-        get_tile_data=None, # Not needed for standard XYZ
-        min_zoom=0,
-        max_zoom=19,
-        tileSize=256,
-        pickable=False,
-    ))
+    # Get actual column names
+    county_col = get_col('county')
+    lat_col = get_col('latitude')
+    lon_col = get_col('longitude')
+    owner_col = get_col('owner_name')
+    addr_col = get_col('address')
+    cat_col = get_col('sub_category')
 
-    # 2. Boundary Layer: Maryland Counties
-    if geojson_data:
-        layers.append(pdk.Layer(
-            "GeoJsonLayer",
-            geojson_data,
-            opacity=0.2, # Slightly more visible
-            stroked=True,
-            filled=True,
-            extruded=False,
-            wireframe=True,
-            get_fill_color=[100, 100, 255, 40],
-            get_line_color=[150, 150, 150],
-            get_line_width=150,
-            pickable=True,
-        ))
-
-    # 3. Property Layer: Hindu-origin owners
-    if not map_df.empty:
-        layers.append(pdk.Layer(
-            "ScatterplotLayer",
-            map_df,
-            get_position=["longitude", "latitude"],
-            get_color=[255, 75, 75, 230],
-            get_radius=40, # Reduced from 100 for better visibility of map features
-            pickable=True,
-            stroked=True,
-            get_line_color=[255, 255, 255], # White outline looks professional against OSM
-            get_line_width=5,
-            radius_min_pixels=4,
-            radius_max_pixels=10,
-        ))
-        
-    # View State
-    if not map_df.empty:
-        v_lat, v_lon = map_df['latitude'].mean(), map_df['longitude'].mean()
-        v_zoom = 13 # Zoomed in closer to see street names and landmarks clearly
+    # Check if required columns exist
+    if county_col not in df.columns:
+        st.error(f"Column '{county_col}' not found in data. Available columns: {list(df.columns)}")
+        st.info("Available columns in file:")
+        st.write(df.columns.tolist())
     else:
-        v_lat, v_lon = 39.0458, -76.6413 # Center of MD
-        v_zoom = 8
+        # Sidebar Filters
+        st.sidebar.header("🔍 Filters")
+        counties = sorted(df[county_col].unique().tolist())
+        selected_county = st.sidebar.multiselect("Select County", counties, default=counties)
 
-    view_state = pdk.ViewState(
-        latitude=v_lat,
-        longitude=v_lon,
-        zoom=v_zoom,
-        pitch=0,
-    )
-    
-    # Tooltip logic
-    tooltip = {
-        "html": "<b>Owner:</b> {owner_name}<br/><b>Address:</b> {address}<br/><b>County:</b> {county}",
-        "style": {"backgroundColor": "#1e2130", "color": "white", "border": "1px solid #ff4b4b"}
-    }
-    
-    # Use map_style=None to use the custom TileLayer as base
-    st.pydeck_chart(pdk.Deck(
-        layers=layers,
-        initial_view_state=view_state,
-        tooltip=tooltip,
-        map_style=None 
-    ))
-    
-    if map_df.empty:
-        st.info("Waiting for more coordinates... The background geocoding script has processed some addresses, but none match your filters yet.")
+        # Filter Data
+        filtered_df = df[df[county_col].isin(selected_county)]
 
-    # Data Table
-    st.subheader("📋 Property Details")
-    
-    # Display table with pretty headers
-    display_df = filtered_df[['owner_name', 'address', 'county', 'sub_category']].copy()
-    display_df.columns = ["Owner Name", "Property Address", "County", "Category"]
-    
-    st.dataframe(display_df, use_container_width=True)
+        # Summary Metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Owners", f"{len(df):,}")
+        with col2:
+            mapped_count = filtered_df[lat_col].notnull().sum() if lat_col in filtered_df.columns else 0
+            st.metric("Mapped Properties", f"{mapped_count:,}")
+        with col3:
+            top_county = filtered_df[county_col].value_counts().idxmax() if not filtered_df.empty else "N/A"
+            st.metric("Top County", top_county)
 
-    # Refresh Button
-    if st.button("🔄 Refresh Data"):
-        st.rerun()
+        # Map Section
+        st.subheader("📍 Property Distribution & County Boundaries")
+
+        map_df = filtered_df.dropna(subset=[lat_col, lon_col]) if lat_col in filtered_df.columns and lon_col in filtered_df.columns else pd.DataFrame()
+
+        # Load County Boundaries
+        COUNTY_GEOJSON = 'data/maryland-counties.geojson'
+        geojson_data = None
+        if os.path.exists(COUNTY_GEOJSON):
+            import json
+            with open(COUNTY_GEOJSON, 'r') as f:
+                geojson_data = json.load(f)
+
+        layers = []
+
+        # 1. Base Layer: Standard OpenStreetMap (OSM) Tiles
+        layers.append(pdk.Layer(
+            "TileLayer",
+            data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+            get_tile_data=None,
+            min_zoom=0,
+            max_zoom=19,
+            tileSize=256,
+            pickable=False,
+        ))
+
+        # 2. Boundary Layer: Maryland Counties
+        if geojson_data:
+            layers.append(pdk.Layer(
+                "GeoJsonLayer",
+                geojson_data,
+                opacity=0.2,
+                stroked=True,
+                filled=True,
+                extruded=False,
+                wireframe=True,
+                get_fill_color=[100, 100, 255, 40],
+                get_line_color=[150, 150, 150],
+                get_line_width=150,
+                pickable=True,
+            ))
+
+        # 3. Property Layer: Hindu-origin owners
+        if not map_df.empty:
+            # We no longer need jitter for house-level coordinates.
+            # Only apply a tiny jitter for centroid matches if they overlap exactly.
+            import numpy as np
+            map_df = map_df.copy()
+            
+            # Tiny jitter only for centroids (Level 7) to separate overlapping points
+            centroid_mask = map_df['Method'].str.contains('Level 7', na=False)
+            if centroid_mask.any():
+                map_df.loc[centroid_mask, '_plot_lat'] = map_df.loc[centroid_mask, lat_col] + np.random.uniform(-0.001, 0.001, centroid_mask.sum())
+                map_df.loc[centroid_mask, '_plot_lon'] = map_df.loc[centroid_mask, lon_col] + np.random.uniform(-0.001, 0.001, centroid_mask.sum())
+            
+            # Direct matches use exact coordinates
+            if (~centroid_mask).any():
+                map_df.loc[~centroid_mask, '_plot_lat'] = map_df.loc[~centroid_mask, lat_col]
+                map_df.loc[~centroid_mask, '_plot_lon'] = map_df.loc[~centroid_mask, lon_col]
+
+            layers.append(pdk.Layer(
+                "ScatterplotLayer",
+                map_df,
+                get_position=["_plot_lon", "_plot_lat"],
+                get_color=[255, 75, 75, 230],
+                get_radius=50,
+                pickable=True,
+                stroked=True,
+                get_line_color=[255, 255, 255],
+                get_line_width=2,
+                radius_min_pixels=3,
+                radius_max_pixels=8,
+            ))
+
+        # View State
+        if not map_df.empty and lat_col in map_df.columns and lon_col in map_df.columns:
+            v_lat, v_lon = map_df[lat_col].mean(), map_df[lon_col].mean()
+            v_zoom = 13
+        else:
+            v_lat, v_lon = 39.0458, -76.6413
+            v_zoom = 8
+
+        view_state = pdk.ViewState(
+            latitude=v_lat,
+            longitude=v_lon,
+            zoom=v_zoom,
+            pitch=0,
+        )
+
+        # Tooltip logic
+        tooltip_html = f"""
+            <b>Owner:</b> {{{owner_col}}}<br/>
+            <b>SDAT Address:</b> {{{addr_col}}}<br/>
+            <b>Verified Address:</b> {{Geo_Address}}<br/>
+            <b>County:</b> {{{county_col}}}<br/>
+            <b>Match Quality:</b> {{Method}}
+        """
+        tooltip = {
+            "html": tooltip_html,
+            "style": {"backgroundColor": "#1e2130", "color": "white", "border": "1px solid #ff4b4b"}
+        }
+
+        # Use map_style=None to use the custom TileLayer as base
+        st.pydeck_chart(pdk.Deck(
+            layers=layers,
+            initial_view_state=view_state,
+            tooltip=tooltip,
+            map_style=None
+        ))
+
+        if map_df.empty:
+            st.info("No coordinates available for the selected filters. The background geocoding script has processed some addresses, but none match your filters yet.")
+
+        # Data Table
+        st.subheader("📋 Property Details")
+
+        # Display table with pretty headers
+        display_cols = [owner_col, addr_col, county_col]
+        if cat_col in df.columns:
+            display_cols.append(cat_col)
+
+        display_df = filtered_df[display_cols].copy()
+
+        # Set column names based on how many columns we have
+        if cat_col in df.columns:
+            display_df.columns = ["Owner Name", "Property Address", "County", "Category"]
+        else:
+            display_df.columns = ["Owner Name", "Property Address", "County"]
+
+        st.dataframe(display_df, use_container_width=True)
+
+        # Refresh Button
+        if st.button("🔄 Refresh Data"):
+            st.cache_data.clear()
+            st.rerun()
 
 except Exception as e:
     st.error(f"Error loading dashboard: {e}")

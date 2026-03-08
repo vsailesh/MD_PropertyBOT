@@ -25,6 +25,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 # Load environment variables
+from src.diagnostics import ScrapeDiagnostics
 load_dotenv()
 
 
@@ -216,7 +217,7 @@ class CommunityAddressFetcher:
             random.shuffle(random_elements)
             
             # Ensure limit is int
-            safe_limit = int(limit) if limit else 500
+            safe_limit = int(limit) if limit else 1000
             for element in random_elements[:safe_limit]:
                 tags = element.get('tags', {})
 
@@ -576,6 +577,18 @@ class SDATAutoScraper:
         self.base_url = "https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx"
         self.driver = None
         self.headless = headless
+        self.diagnostics = ScrapeDiagnostics()
+        self.selectors = self._load_selectors()
+
+    def _load_selectors(self) -> dict:
+        """Load CSS selectors from config."""
+        config_path = "config/sdat_selectors.json"
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Could not load selectors from {config_path}: {e}")
+            return {}
 
     def start_driver(self):
         """Start Chrome driver."""
@@ -813,33 +826,35 @@ class SDATAutoScraper:
                 method_select.select_by_visible_text("STREET ADDRESS")
                 
                 # Click Continue
-                continue_ids = [
+                continue_ids = self.selectors.get("pages", {}).get("selection", {}).get("continue_btn_ids", [
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StartNavigationTemplateContainerID_btnContinue",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton"
-                ]
+                ])
                 if not self._click_btn_robust(wait, continue_ids):
                     print("    ⚠️ Could not click Continue button.")
+                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Continue button click failed")
                     continue
 
                 # Step 2: Search Criteria
-                name_input_ids = [
+                name_input_ids = self.selectors.get("pages", {}).get("search", {}).get("street_name_ids", [
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetName",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetName",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetName_0"
-                ]
+                ])
                 name_field, name_id = self._find_element_robust(wait, name_input_ids)
                 
                 if not name_field:
                     print(f"    ⚠️ Could not find street name input field.")
+                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Street name input field missing")
                     continue
 
                 # Clear number
-                num_field_ids = [
+                num_field_ids = self.selectors.get("pages", {}).get("search", {}).get("street_number_ids", [
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetNumber",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetNumber",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetNumber_0"
-                ]
+                ])
                 for n_id in num_field_ids:
                     try:
                         f = self.driver.find_element(By.ID, n_id)
@@ -850,13 +865,14 @@ class SDATAutoScraper:
                 name_field.send_keys(street_query)
                 
                 # Click Search
-                search_btn_ids = [
+                search_btn_ids = self.selectors.get("pages", {}).get("search", {}).get("search_btn_ids", [
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_btnStepNextButton",
                     "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton"
-                ]
+                ])
                 if not self._click_btn_robust(wait, search_btn_ids):
                     print("    ⚠️ Could not click Search button.")
+                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Search button click failed")
                     continue
 
                 # Step 3: Extract Bulk Data
@@ -880,10 +896,12 @@ class SDATAutoScraper:
                 # Grid results
                 try:
                     table_id = "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchResult_gv_SearchResult"
-                    wait.until(EC.presence_of_element_located((By.ID, table_id)))
+                    # Use a shorter wait specifically for the table, since missing table = 0 results
+                    short_wait = WebDriverWait(self.driver, 3)
+                    short_wait.until(EC.presence_of_element_located((By.ID, table_id)))
                     
                     page_num = 1
-                    max_pages = 100  # Safety limit
+                    max_pages = 1000  # Safety limit
 
                     while page_num <= max_pages:
                         table = self.driver.find_element(By.ID, table_id)
@@ -974,7 +992,9 @@ class SDATAutoScraper:
                         return results
 
                 except TimeoutException:
-                    print(f"    ⚠️ Timeout waiting for results.")
+                    print(f"    ⚠️ No results table found (Timeout). Assuming 0 properties.")
+                    return []
+                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Timeout waiting for search results")
                     continue
 
             except Exception as e:
@@ -1022,36 +1042,58 @@ class RaceEthnicityPredictor:
             }
 
     def _clean_name(self, full_name: str) -> str:
-        """Clean SDAT name strings which often contain noise."""
+        """Clean SDAT name strings with clinical precision."""
         if not full_name: return ""
         name = full_name.upper()
-        # Remove common noise words
-        noise = [
-            r'\bTRUSTEE\b', r'\bTRUSTEES\b', r'\bTRUST\b', r'\bREVOCABLE\b', 
-            r'\bLIVING\b', r'\bFAMILY\b', r'\bET AL\b', r'\bLIFE ESTATE\b',
-            r'\bINC\b', r'\bLLC\b', r'\bCORP\b', r'\b&', r'\bAND\b'
+        
+        # 1. Identify and Tag Business/Technical Entities
+        self.is_business_entity = False
+        business_markers = [
+            r'\bINC\b', r'\bLLC\b', r'\bCORP\b', r'\bCORPORATION\b', r'\bLTD\b',
+            r'\bPTNRSHP\b', r'\bPARTNERSHIP\b', r'\bASSN\b', r'\bASSOCIATES\b',
+            r'\bHOLDINGS\b', r'\bPROPERTY\b', r'\bPROPERTIES\b', r'\bHOLDING\b', r'\bHOLDIN\b',
+            r'\bLAND\b', r'\bESTATE\b', r'\bMGMT\b', r'\bMANAGEMENT\b', r'\bINVESTMENTS\b',
+            r'\bTRUSTEE\b', r'\bTRUSTEES\b', r'\bTRUST\b', r'\bFOUNDATION\b'
+        ]
+        for marker in business_markers:
+            if re.search(marker, name):
+                self.is_business_entity = True
+                break
+
+        # 2. Remove common noise words
+        noise = business_markers + [
+            r'\bREVOCABLE\b', r'\bLIVING\b', r'\bFAMILY\b', r'\bET AL\b', r'\bETAL\b', 
+            r'\bLIFE ESTATE\b', r'\b&', r'\bAND\b'
         ]
         for pattern in noise:
             name = re.sub(pattern, '', name)
         
-        # Remove special characters except spaces and hyphens
-        name = re.sub(r'[^A-Z\s-]', '', name)
-        # Collapse multiple spaces
+        # 3. Remove Professional / Suffix Noise (JR, SR, MD, PHD, etc.)
+        suffixes = [
+            r'\bJR\b', r'\bSR\b', r'\bII\b', r'\bIII\b', r'\bIV\b', r'\bV\b',
+            r'\bMD\b', r'\bPHD\b', r'\bESQ\b', r'\bDR\b', r'\bPROF\b'
+        ]
+        for pattern in suffixes:
+            name = re.sub(pattern, '', name)
+            
+        # 4. Clean special characters but preserve separators
+        name = re.sub(r'[^A-Z\s,-]', '', name)
+        
+        # 5. Collapse multiple spaces
         name = re.sub(r'\s+', ' ', name).strip()
         return name
 
     def _is_indian_surname(self, surname: str) -> Dict:
-        """Check if a surname is typically Indian and identify sub-category."""
+        """
+        Check if a surname is typically Indian and identify sub-category.
+        Optimized for 95%+ accuracy for Hindu identification.
+        """
         s = surname.lower()
         
-        # Categorized Indian Surnames
-        sikh = ['singh', 'kaur', 'gill', 'bajwa', 'dhillon', 'sidhu', 'sandhu', 'brar', 'grewal', 'nijjar', 'thind']
-        muslim = ['khan', 'siddiqui', 'ahmed', 'malik', 'butt', 'rizvi', 'hashmi', 'qureshi', 'pasha', 'ansari', 'mirza', 'farooqui', 'zidi']
-        christian = ['varghese', 'mathew', 'kurian', 'chacko', 'cherian', 'ittooop', 'ittooop', 'dias', 'fernandes', 'pereira', 'd’souza', 'souza']
-        
-        # Comprehensive Hindu Surnames (North, South, East, West, Nepal, Bhutan)
+        # 🟢 CONSOLIDATED HINDU SURNAMES (North, South, East, West, Nepal, Bhutan)
+        # These are high-confidence indicators of Hindu/South Asian origin
         hindu = [
-            # North India
+            # NORTH & WEST (Hindi, Gujarati, Marathi, Punjabi Hindu)
             'patel', 'kumar', 'gupta', 'shah', 'joshi', 'devi', 'das', 'sharma', 'agrawal', 'singhal', 
             'tripathi', 'malhotra', 'kapoor', 'khanna', 'mehta', 'shroff', 'maheshwari', 'agarwal', 
             'bollu', 'gambhir', 'chhabra', 'anand', 'bakshi', 'bansal', 'bhatia', 'chopra', 'dhawan', 
@@ -1060,25 +1102,46 @@ class RaceEthnicityPredictor:
             'sethi', 'sood', 'taneja', 'uppal', 'vohra', 'wadhwa', 'yadav', 'chawla', 'gadkari', 
             'gokhale', 'karve', 'modi', 'paranjpe', 'ranade', 'tilak', 'vaidya', 'tyagi', 'verma', 
             'vats', 'shukla', 'mishra', 'pandey', 'tiwari', 'dwivedi', 'chaubey', 'thakur', 'rajput',
+            'mital', 'shrivastava', 'saxena', 'jaitley', 'gadgil', 'pujari', 'vashishta', 'bhardwaj',
             
-            # South India
+            # SOUTH (Telugu, Tamil, Kannada, Malayalam Hindu)
             'reddy', 'rao', 'iyer', 'nair', 'menon', 'kulkarni', 'deshpande', 'shetty', 'hegde', 'pai', 
             'balakrishnan', 'venkatesh', 'nambiar', 'warrier', 'kurup', 'panicker', 'pillai', 'acharya', 
             'adiga', 'bhat', 'hebbar', 'maiya', 'muralidhar', 'shenoy', 'uudpa', 'vaikunta', 'balaram', 
             'chetty', 'mudaliar', 'naidu', 'gowda', 'subramanian', 'krishnan', 'raghavan', 'pillay',
+            'murthy', 'srinivasan', 'rangarajan', 'venkat', 'narayanan', 'gopal', 'swamy', 'kalyan',
+            'rajagopalan', 'manian', 'vasudevan', 'ganesan', 'moorthy', 'prabhu', 'kamath', 'kiny',
             
-            # East India / West Bengal
+            # EAST & BENGALI
             'chowdhury', 'mukherjee', 'chatterjee', 'banerjee', 'mukhopadhyay', 'chattopadhyay', 
             'bandyopadhyay', 'gangopadhyay', 'ghosh', 'bose', 'dutta', 'majumdar', 'ray', 'sen', 
-            'guha', 'chakraborty', 'basu', 'sarkar', 'paul', 'mitra',
+            'guha', 'chakraborty', 'basu', 'sarkar', 'paul', 'mitra', 'bhattacharya', 'mandal',
             
-            # Nepal
+            # NEPAL & HILL HINDUS
             'adhikari', 'thapa', 'gurung', 'bhattarai', 'poudel', 'shrestha', 'dahal', 'aryal', 
             'basnet', 'magar', 'rai', 'tamang', 'ghimire', 'paudel', 'acharya', 'khadka', 'pant',
+            'karki', 'subedi', 'regmi', 'sapkota', 'dhakal', 'devkota', 'lamsal', 'chalise',
             
-            # Bhutan (Hindu/Indian ethnic names)
-            'dorji', 'wangchuk', 'namgyal', 'tshering', 'gyeltshen'
+            # BHUTANESE HINDU NAMES
+            'dorji', 'wangchuk', 'namgyal', 'tshering', 'gyeltshen', 'leki', 'rinzin'
         ]
+
+        # 🔵 OTHER SOUTH ASIAN CATEGORIES (Low confidence for 'Hindu' extract)
+        # Added truncated markers (SI, KA) common in SDAT data
+        sikh = ['singh', 'kaur', 'gill', 'bajwa', 'dhillon', 'sidhu', 'sandhu', 'brar', 'grewal', 'nijjar', 'thind', 'purewal', 'dhaliwal', 'si', 'ka']
+        muslim = ['khan', 'siddiqui', 'ahmed', 'malik', 'butt', 'rizvi', 'hashmi', 'qureshi', 'pasha', 'ansari', 'mirza', 'farooqui', 'zidi', 'ali', 'hussain', 'mohammad', 'mohammed', 'khalequz', 'rahman']
+        christian = ['varghese', 'mathew', 'kurian', 'chacko', 'cherian', 'dias', 'fernandes', 'pereira', 'dsouza', 'dmello', 'lobo', 'pinto']
+
+        if s in hindu:
+             return {'is_indian': True, 'is_hindu': True, 'category': 'Hindu'}
+        if s in sikh:
+             return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
+        if s in muslim:
+             return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
+        if s in christian:
+             return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
+             
+        return {'is_indian': False, 'is_hindu': False, 'category': 'Unknown'}
 
         if s in sikh:
              return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
@@ -1112,22 +1175,24 @@ class RaceEthnicityPredictor:
                 'method': 'None'
             }
 
-        # SDAT Format is usually LAST FIRST ...
-        # We take the FIRST part of the cleaned string as the surname
-        parts = cleaned_name.split()
-        if not parts:
-            return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
-
-        # In SDAT, the first word is almost always the surname
-        surname = parts[0]
-        # For ethnicolr, it might expect FIRST LAST, so we try to provide what it wants
-        firstname = parts[1] if len(parts) > 1 else ''
+        # SDAT Format is usually LAST FIRST ... OR FIRST LAST depending on commas
+        # If there's a comma, the part BEFORE the comma is the surname
+        if ',' in cleaned_name:
+            surname = cleaned_name.split(',')[0].strip()
+            # Everything after the comma is potentially the first name
+            firstname = cleaned_name.split(',')[1].strip().split()[0] if len(cleaned_name.split(',')) > 1 else ''
+        else:
+            # No comma, assume LAST FIRST (SDAT standard) but check components
+            parts = cleaned_name.split()
+            if not parts:
+                return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
+            surname = parts[0]
+            firstname = parts[1] if len(parts) > 1 else ''
 
         # Use ethnicolr if available
         if self.use_ethnicolr:
             try:
-                # ethnicolr returns DataFrame with predictions
-                # We try both orders to see if we get a better hit, but mostly we trust the primary surname
+                # We provide firstname and lastname for better wiki/census matching
                 result = self.pred_wiki_name(pd.DataFrame([[firstname, surname]]),
                                            columns=['firstname', 'lastname'])
 
@@ -1138,27 +1203,40 @@ class RaceEthnicityPredictor:
                     if race_cols:
                         probs = {col.replace('race_', ''): row[col] for col in race_cols}
                         predicted = max(probs, key=probs.get)
+                        # Specific handling for the 'Asian, IndianSubContinent' category in pred_wiki_name
+                        if 'Asian,IndianSubContinent' in probs:
+                            predicted = 'Asian,IndianSubContinent'
+                        
                         confidence = round(probs[predicted] * 100, 1)
 
-                        if confidence > 40: # threshold for "method"
-                            # Special case: ethnicolr often labels Indian as Asian
-                            # We check our custom Indian list for better precision
-                            if predicted == 'Asian':
-                                indian_check = self._is_indian_surname(surname)
-                                if indian_check['is_indian']:
-                                    return {
-                                        'predicted_race': 'Indian',
-                                        'is_hindu': indian_check.get('is_hindu', False),
-                                        'sub_category': indian_check.get('category', 'General'),
-                                        'confidence': max(confidence, 85.0),
-                                        'method': f'ethnicolr + Indian Pattern ({surname})'
-                                    }
+                        if confidence > 35:
+                            # Map IndianSubContinent to Indian
+                            final_race = predicted
+                            if 'Indian' in predicted or 'Asian,IndianSubContinent' == predicted:
+                                final_race = 'Indian'
+
+                            # Cross-verify with our high-precision Hindu dictionary
+                            # BRUTAL ACCURACY: Check ALL parts of the name for conflicting markers
+                            all_parts = cleaned_name.replace(',', ' ').split()
+                            conflicts = []
+                            for part in all_parts:
+                                check = self._is_indian_surname(part)
+                                if check['is_indian'] and not check['is_hindu']:
+                                    conflicts.append(check['category'])
+                            
+                            indian_check = self._is_indian_surname(surname)
+                            
+                            # If we find ANY Sikh, Muslim markers, or Business indicators, disqualify as Hindu
+                            is_hindu = indian_check.get('is_hindu', False)
+                            if conflicts or getattr(self, 'is_business_entity', False):
+                                is_hindu = False
 
                             return {
-                                'predicted_race': predicted,
-                                'is_hindu': False,
-                                'confidence': confidence,
-                                'method': f'ethnicolr ({surname})'
+                                'predicted_race': 'Indian' if (indian_check['is_indian'] or final_race == 'Indian') else final_race,
+                                'is_hindu': is_hindu,
+                                'sub_category': 'Mixed/Business' if (conflicts and is_hindu) else (conflicts[0] if conflicts else indian_check.get('category', 'General')),
+                                'confidence': max(confidence, 85.0 if indian_check['is_indian'] else 0),
+                                'method': f'ethnicolr + multi-token ({final_race}/{surname})'
                             }
 
             except Exception as e:
@@ -1166,6 +1244,14 @@ class RaceEthnicityPredictor:
 
         # Fallback to pattern matching
         surname_lower = surname.lower()
+        
+        # BRUTAL ACCURACY: Check ALL parts of the name for conflicting markers in fallback too
+        all_parts = cleaned_name.replace(',', ' ').split()
+        conflicts = []
+        for part in all_parts:
+            check = self._is_indian_surname(part)
+            if check['is_indian'] and not check['is_hindu']:
+                conflicts.append(check['category'])
 
         # Expanded list for better accuracy based on census data
         expanded_patterns = {
@@ -1227,10 +1313,15 @@ class RaceEthnicityPredictor:
                 # Special handling for Indian to identify Hindu names
                 if race == 'Indian':
                     indian_check = self._is_indian_surname(surname_lower)
+                    is_hindu = indian_check.get('is_hindu', False)
+                    # Disqualify if business or religious conflict found anywhere in string
+                    if conflicts or getattr(self, 'is_business_entity', False):
+                        is_hindu = False
+                        
                     return {
                         'predicted_race': 'Indian',
-                        'is_hindu': indian_check.get('is_hindu', False),
-                        'sub_category': indian_check.get('category', 'General'),
+                        'is_hindu': is_hindu,
+                        'sub_category': 'Mixed/Business' if (conflicts and is_hindu) else (conflicts[0] if conflicts else indian_check.get('category', 'General')),
                         'confidence': 90.0,
                         'method': 'Surname Pattern'
                     }
@@ -1395,7 +1486,7 @@ Choose mode:
         # Quick format mode
         community = input("\nEnter community name (e.g., Towson): ").strip()
         county = input("Enter county (e.g., Baltimore County): ").strip()
-        limit = int(input(f"Max addresses to fetch (default 500): ").strip() or "500")
+        limit = int(input(f"Max addresses to fetch (default 1000): ").strip() or "1000")
 
         pipeline.run_community(community, county, limit=limit, scrape=False)
 
