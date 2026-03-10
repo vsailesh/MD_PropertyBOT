@@ -21,3 +21,10 @@ data/*.xlsx
 docs/*.html
 *.log
 debug_*.html
+
+# Databases and Backups
+*.db
+*.db.backup_*
+data/*.db
+data/*.db.backup_*
+data/*.xlsx.backup_*

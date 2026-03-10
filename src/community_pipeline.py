@@ -657,7 +657,12 @@ class SDATAutoScraper:
         try:
             # Navigate to SDAT
             self.driver.get(self.base_url)
-            wait = WebDriverWait(self.driver, 15)
+            wait = WebDriverWait(self.driver, 30)  # Increased for stability under load
+            
+            # Check for Service Unavailable or Server Error
+            page_text = self.driver.page_source.upper()
+            if "SERVICE UNAVAILABLE" in page_text or "SERVER ERROR" in page_text:
+                raise Exception("SDAT Service Unavailable or Server Error")
             
             # Step 1: Select County and Search Method
             county_select = Select(wait.until(EC.presence_of_element_located(
@@ -803,7 +808,7 @@ class SDATAutoScraper:
                 
                 print(f"  🌐 Trying search: {street_query} in {county}")
                 self.driver.get(self.base_url)
-                wait = WebDriverWait(self.driver, 15)
+                wait = WebDriverWait(self.driver, 30)
 
                 # Step 1: Selection Page
                 county_select_el = wait.until(EC.presence_of_element_located((By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_ddlCounty")))
@@ -901,7 +906,7 @@ class SDATAutoScraper:
                     short_wait.until(EC.presence_of_element_located((By.ID, table_id)))
                     
                     page_num = 1
-                    max_pages = 1000  # Safety limit
+                    max_pages = 20000  # Practically infinite for all MD streets
 
                     while page_num <= max_pages:
                         table = self.driver.find_element(By.ID, table_id)

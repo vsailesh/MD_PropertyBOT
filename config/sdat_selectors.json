@@ -1,0 +1,36 @@
+{
+    "pages": {
+        "selection": {
+            "county_dropdown": "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_ddlCounty",
+            "method_dropdown": "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_ddlSearchType",
+            "continue_btn_ids": [
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StartNavigationTemplateContainerID_btnContinue",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton"
+            ]
+        },
+        "search": {
+            "street_number_ids": [
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetNumber",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreenNumber",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetNumber",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetNumber_0"
+            ],
+            "street_name_ids": [
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetName",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetName",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetName_0"
+            ],
+            "search_btn_ids": [
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_btnStepNextButton",
+                "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton"
+            ]
+        },
+        "results": {
+            "single_result_owner": "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblOwnerName_0",
+            "single_result_premises": "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblPremisesAddress_0",
+            "multiple_results_table": "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchResult_gv_SearchResult"
+        }
+    }
+}
