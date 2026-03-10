@@ -136,7 +136,7 @@ class RadiusStreetGatherer:
                      radius_meters: float = 8046.72,
                      target_county: Optional[str] = None) -> List[Dict]:
         """Fetch streets from Overpass within radius."""
-        highway_types = ["unclassified", "residential", "tertiary", "secondary", "primary"]
+        highway_types = ["unclassified", "residential", "tertiary", "secondary", "primary", "living_street", "service"]
         highway_filter = "|".join(highway_types)
         
         query = f"""
