@@ -24,6 +24,8 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 
+import undetected_chromedriver as uc
+from bs4 import BeautifulSoup
 # Load environment variables
 from src.diagnostics import ScrapeDiagnostics
 load_dotenv()
@@ -467,16 +469,31 @@ class SDATFormatter:
     """Format addresses strictly according to SDAT rules."""
 
     SUFFIXES = {
-        'AVENUE', 'AVE', 'STREET', 'ST', 'DRIVE', 'DR', 'ROAD', 'RD',
-        'LANE', 'LN', 'WAY', 'COURT', 'CT', 'PLACE', 'PL', 'CIRCLE',
-        'CIR', 'BOULEVARD', 'BLVD', 'TRAIL', 'TRL', 'LOOP', 'TERRACE', 'TER',
-        'PIKE', 'PK', 'HIGHWAY', 'HWY', 'PARKWAY', 'PKWY', 'PATH', 'ROW',
-        'RUN', 'CROSSING', 'XING', 'ALLEY', 'ALY', 'COMMONS', 'SQ', 'SQUARE'
+        'AVE', 'AVENUE', 'ST', 'STREET', 'DR', 'DRIVE', 'RD', 'ROAD',
+        'LN', 'LANE', 'WAY', 'CT', 'COURT', 'PL', 'PLACE', 'CIR', 'CIRCLE',
+        'BLVD', 'BOULEVARD', 'TRL', 'TRAIL', 'LOOP', 'TER', 'TERRACE',
+        'PK', 'PIKE', 'HWY', 'HIGHWAY', 'PKWY', 'PARKWAY', 'PATH', 'ROW',
+        'RUN', 'XING', 'CROSSING', 'ALY', 'ALLEY', 'SQ', 'SQUARE',
+        'CMN', 'COMMONS', 'HL', 'HILL', 'HLS', 'HILLS', 'VLG', 'VILLAGE',
+        'VLY', 'VALLEY', 'VL', 'VILLE', 'VW', 'VIEW', 'VIS', 'VISTA',
+        'WALK', 'WA', 'WALL', 'WOODS', 'WOOD', 'XRD', 'CROSSROAD',
+        'ESTATE', 'ESTATES', 'FLD', 'FIELD', 'FLDS', 'FIELDS',
+        'FRG', 'FORGE', 'FRST', 'FOREST', 'GRN', 'GREEN', 'GRNS', 'GREENS',
+        'GROVE', 'GRV', 'HBR', 'HARBOR', 'HBRS', 'HARBORS', 'HT', 'HEIGHTS',
+        'HTS', 'KY', 'KEY', 'KLS', 'KEYS', 'KNOL', 'KNOLL', 'KNLS', 'KNOLLS',
+        'LDG', 'LODGE', 'MNR', 'MANOR', 'MNRS', 'MANORS', 'MEADOW', 'MDW',
+        'MDWS', 'MEADOWS', 'ML', 'MILL', 'MLS', 'MILLS', 'MSN', 'MISSION',
+        'MT', 'MOUNT', 'PT', 'POINT', 'PTS', 'POINTS', 'PRT', 'PORT',
+        'PR', 'PRAIRIE', 'SHL', 'SHOAL', 'SHLS', 'SHOALS', 'SHR', 'SHORE',
+        'SHRS', 'SHORES', 'SPG', 'SPRING', 'SPGS', 'SPRINGS', 'STEA', 'STEAK',
+        'STR', 'STRA', 'STRAV', 'STRAV', 'STRAVE', 'STRAVENUE', 'STRAVN',
+        'STRVENUE', 'TRCE', 'TRACE', 'TRFY', 'TRAFFICWAY', 'UN', 'UNION',
+        'WELL', 'WELLS', 'WING'
     }
 
     DIRECTIONS = {
-        'NORTH', 'N', 'SOUTH', 'S', 'EAST', 'E', 'WEST', 'W',
-        'NORTHEAST', 'NE', 'NORTHWEST', 'NW', 'SOUTHEAST', 'SE', 'SOUTHWEST', 'SW'
+        'N', 'NORTH', 'S', 'SOUTH', 'E', 'EAST', 'W', 'WEST',
+        'NE', 'NORTHEAST', 'NW', 'NORTHWEST', 'SE', 'SOUTHEAST', 'SW', 'SOUTHWEST'
     }
 
     @staticmethod
@@ -579,6 +596,27 @@ class SDATAutoScraper:
         self.headless = headless
         self.diagnostics = ScrapeDiagnostics()
         self.selectors = self._load_selectors()
+        
+        # New requests session for faster, non-blocked scraping
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        })
+        
+        # County to ID mapping for SDAT dropdown
+        self.county_map = {
+            'ALLEGANY': '01', 'ANNE ARUNDEL': '02', 'BALTIMORE CITY': '03',
+            'BALTIMORE COUNTY': '04', 'CALVERT': '05', 'CAROLINE': '06',
+            'CARROLL': '07', 'CECIL': '08', 'CHARLES': '09', 'DORCHESTER': '10',
+            'FREDERICK': '11', 'GARRETT': '12', 'HARFORD': '13', 'HOWARD': '14',
+            'KENT': '15', 'MONTGOMERY': '16', "PRINCE GEORGE'S": '17',
+            'QUEEN ANNE\'S': '18', 'ST. MARY\'S': '19', 'SOMERSET': '20',
+            'TALBOT': '21', 'WASHINGTON': '22', 'WICOMICO': '23', 'WORCESTER': '24'
+        }
 
     def _load_selectors(self) -> dict:
         """Load CSS selectors from config."""
@@ -592,18 +630,18 @@ class SDATAutoScraper:
 
     def start_driver(self):
         """Start Chrome driver."""
-        chrome_options = Options()
+        options = uc.ChromeOptions()
         if self.headless:
-            chrome_options.add_argument('--headless=new') # Use new headless mode
-        chrome_options.add_argument('--no-sandbox')
-        chrome_options.add_argument('--disable-dev-shm-usage')
-        chrome_options.add_argument('--disable-gpu')
-        chrome_options.add_argument('--window-size=1920,1080')
-        # Add a real user agent to prevent some stability issues
-        chrome_options.add_argument('--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+            # Note: undetected_chromedriver has its own headless handling
+            options.headless = True
+            
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
 
-        service = Service(ChromeDriverManager().install())
-        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+        self.driver = uc.Chrome(options=options)
+        
         self.driver.set_page_load_timeout(30) # Set reasonable timeout
         print("✅ WebDriver started")
 
@@ -612,39 +650,177 @@ class SDATAutoScraper:
         if self.driver:
             self.driver.quit()
     
-    def _click_btn_robust(self, wait, btn_ids: list[str]) -> bool:
-        """Helper to try clicking buttons from a list of possible IDs with scrolling and retries."""
-        for btn_id in btn_ids:
-            for attempt in range(2): # Two attempts per ID
-                try:
-                    btn = wait.until(EC.presence_of_element_located((By.ID, btn_id)))
-                    # Scroll into view
-                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", btn)
-                    time.sleep(0.5)
-                    
-                    # Try clicking
-                    try:
-                        btn = wait.until(EC.element_to_be_clickable((By.ID, btn_id)))
-                        btn.click()
-                    except:
-                        # Fallback to JS click
-                        self.driver.execute_script("arguments[0].click();", btn)
-                    return True
-                except Exception as e:
-                    if attempt == 1: continue # Try next ID
-                    time.sleep(1)
-        return False
+    def _get_form_vars(self, soup: BeautifulSoup) -> Dict[str, str]:
+        """Extract ASP.NET hidden form variables."""
+        vars = {}
+        for id in ['__VIEWSTATE', '__VIEWSTATEGENERATOR', '__EVENTVALIDATION']:
+            el = soup.find(id=id)
+            if el:
+                vars[id] = el.get('value', '')
+        return vars
 
-    def _find_element_robust(self, wait, element_ids: list[str]):
-        """Helper to find an element from a list of possible IDs with scrolling."""
-        for eid in element_ids:
+    def search_street_bulk(self, street_name: str, county: str) -> list[dict]:
+        """
+        Search for a street name using requests-based ASP.NET form flow.
+        Much faster and bypasses Selenium detection.
+        """
+        # 1. Start with strict formatting
+        formatted = SDATFormatter.format_address(street_name)
+        base_name = formatted['street_name']
+        
+        if not base_name:
+            return []
+
+        # 2. Build variations
+        variations = [base_name]
+        if " " in base_name: variations.append(base_name.replace(" ", ""))
+        elif base_name.startswith("MC") and len(base_name) > 2: variations.append(base_name.replace("MC", "MC ", 1))
+        if base_name.startswith("ST "): variations.append(base_name.replace("ST ", "SAINT ", 1))
+        elif base_name.startswith("SAINT "): variations.append(base_name.replace("SAINT ", "ST ", 1))
+        if "BALTIMORE" in base_name: variations.append(base_name.replace("BALTIMORE", "BALTO"))
+        if "NATIONAL" in base_name: variations.append(base_name.replace("NATIONAL", "NATL"))
+        
+        variations = [v for v in dict.fromkeys(variations) if v and v != 'UNKNOWN']
+        
+        county_upper = county.upper().replace(" COUNTY", "").strip()
+        county_id = self.county_map.get(county_upper)
+        if not county_id:
+            # Fallback for approximate matches
+            for k, v in self.county_map.items():
+                if county_upper in k:
+                    county_id = v
+                    break
+        
+        if not county_id:
+            print(f"  ⚠️ County {county} not found in ID map.")
+            return []
+
+        all_results = []
+        for street_query in variations:
             try:
-                element = wait.until(EC.presence_of_element_located((By.ID, eid)))
-                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
-                return element, eid
-            except:
+                print(f"  🌐 Trying search: {street_query} in {county} (Requests)")
+                
+                # Step 0: GET base page to get initial ViewState
+                resp = self.session.get(self.base_url, timeout=15)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                form_vars = self._get_form_vars(soup)
+                
+                # Step 1: POST to select County and Street Address method
+                payload = {
+                    **form_vars,
+                    '__EVENTTARGET': 'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucSearchType$ddlCounty',
+                    'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucSearchType$ddlCounty': county_id,
+                    'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucSearchType$ddlSearchType': '01', # Street Address
+                    'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$StartNavigationTemplateContainerID$btnContinue': 'Continue'
+                }
+                
+                resp = self.session.post(self.base_url, data=payload, timeout=15)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                form_vars = self._get_form_vars(soup)
+                
+                # Step 2: POST the street search
+                payload = {
+                    **form_vars,
+                    'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucEnterData$txtStreetName': street_query,
+                    'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$StepNavigationTemplateContainerID$btnStepNextButton': 'Next'
+                }
+                
+                resp = self.session.post(self.base_url, data=payload, timeout=20)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                
+                # Step 3: Parse Results
+                if "No records found" in resp.text:
+                    continue
+
+                # Check for single result
+                owner_el = soup.find(id="cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblOwnerName_0")
+                if owner_el:
+                    addr_el = soup.find(id="cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblPremisesAddress_0")
+                    all_results.append({
+                        'owner_name': owner_el.text.strip(),
+                        'address': addr_el.text.strip() if addr_el else "Unknown",
+                        'county': county
+                    })
+                    return all_results
+
+                # Grid results (Multiple Pages)
+                results = self._parse_grid_results(soup, county)
+                
+                # Handle Pagination
+                page_num = 1
+                while True:
+                    form_vars = self._get_form_vars(soup)
+                    # Find pager links
+                    pager = soup.find("tr", class_="PagerStyle")
+                    if not pager: break
+                    
+                    next_page = page_num + 1
+                    target_link = None
+                    
+                    # Try to find the numeric link for the next page
+                    links = pager.find_all("a")
+                    for link in links:
+                        if link.text.strip() == str(next_page):
+                            target_link = link
+                            break
+                    
+                    # Fallback to "..." or "Next"
+                    if not target_link:
+                        for link in links:
+                            if link.text.strip() in ("...", "Next", ">"):
+                                target_link = link
+                                break
+                    
+                    if not target_link: break
+                    
+                    # Extract __EVENTTARGET and __EVENTARGUMENT from href if it's a postback
+                    # href="javascript:__doPostBack('ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucSearchResult$gv_SearchResult','Page$2')"
+                    href = target_link.get('href', '')
+                    match = re.search(r"__doPostBack\('([^']+)','([^']+)'\)", href)
+                    if not match: break
+                    
+                    target, argument = match.groups()
+                    payload = {
+                        **form_vars,
+                        '__EVENTTARGET': target,
+                        '__EVENTARGUMENT': argument
+                    }
+                    
+                    resp = self.session.post(self.base_url, data=payload, timeout=20)
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    
+                    page_results = self._parse_grid_results(soup, county)
+                    if not page_results: break
+                    results.extend(page_results)
+                    page_num += 1
+                    
+                if results:
+                    return results
+
+            except Exception as e:
+                print(f"    ⚠️ Requests Error: {e}")
                 continue
-        return None, None
+        
+        return []
+
+    def _parse_grid_results(self, soup: BeautifulSoup, county: str) -> list[dict]:
+        """Helper to parse the SDAT search result grid."""
+        table = soup.find(id="cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchResult_gv_SearchResult")
+        if not table: return []
+        
+        results = []
+        rows = table.find_all("tr")
+        for row in rows:
+            if "PagerStyle" in (row.get('class') or []): continue
+            cells = row.find_all("td")
+            if len(cells) >= 3:
+                owner = re.sub(r'\s+', ' ', cells[0].text.strip())
+                address = re.sub(r'\s+', ' ', cells[2].text.strip())
+                if not owner or owner.upper() in ("NAME", "ACCOUNT ID"): continue
+                if owner.replace(" ", "").isdigit(): continue # Skip pager artifacts
+                results.append({'owner_name': owner, 'address': address, 'county': county})
+        return results
+
 
     def search_and_extract(self, search_data: Dict, county: str) -> Dict:
         """Search SDAT using verified selectors."""
@@ -714,15 +890,15 @@ class SDATAutoScraper:
                     owner_name_el = wait.until(EC.presence_of_element_located(
                         (By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblOwnerName_0")
                     ))
-                    owner_name = owner_name_el.text.strip()
+                    owner_name = re.sub(r'\s+', ' ', owner_name_el.text.strip())
                     
                     try:
-                        mailing_address = self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblMailAddress_0").text.strip()
+                        mailing_address = re.sub(r'\s+', ' ', self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblMailAddress_0").text.strip())
                     except:
                         mailing_address = "Not Found"
                         
                     try:
-                        premises_address = self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblPremisesAddress_0").text.strip()
+                        premises_address = re.sub(r'\s+', ' ', self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblPremisesAddress_0").text.strip())
                     except:
                         premises_address = "Not Found"
                     
@@ -763,250 +939,6 @@ class SDATAutoScraper:
             print(f"❌ Error scraping {street_number} {street_name}: {e}")
             return self._not_found_result()
 
-    def search_street_bulk(self, street_name: str, county: str) -> list[dict]:
-        """
-        Search for a street name using cascading variations for maximum accuracy.
-        Follows official SDAT Instructions 1-7.
-        """
-        # 1. Start with strict formatting (Suffix/Direction removal)
-        formatted = SDATFormatter.format_address(street_name)
-        base_name = formatted['street_name']
-        
-        if not base_name:
-            print(f"  ⚠️ Could not format street name: {street_name}")
-            return []
-
-        # 2. Build cascading variations based on instructions
-        variations = [base_name]
-        
-        # Instruction 4: One word vs two words (e.g., "McHenry" vs "Mc Henry")
-        if " " in base_name:
-            variations.append(base_name.replace(" ", ""))
-        elif base_name.startswith("MC") and len(base_name) > 2:
-            variations.append(base_name.replace("MC", "MC ", 1))
-            
-        # Instruction 4: Saint vs St
-        if base_name.startswith("ST "):
-            variations.append(base_name.replace("ST ", "SAINT ", 1))
-        elif base_name.startswith("SAINT "):
-            variations.append(base_name.replace("SAINT ", "ST ", 1))
-            
-        # Instruction 7: Alternate names (Balto Natl for Baltimore National)
-        if "BALTIMORE" in base_name:
-            variations.append(base_name.replace("BALTIMORE", "BALTO"))
-        if "NATIONAL" in base_name:
-            variations.append(base_name.replace("NATIONAL", "NATL"))
-            
-        # Ensure unique and filtered
-        variations = [v for v in dict.fromkeys(variations) if v and v != 'UNKNOWN']
-        
-        all_results = []
-        for street_query in variations:
-            try:
-                if not self.driver:
-                    self.start_driver()
-                
-                print(f"  🌐 Trying search: {street_query} in {county}")
-                self.driver.get(self.base_url)
-                wait = WebDriverWait(self.driver, 30)
-
-                # Step 1: Selection Page
-                county_select_el = wait.until(EC.presence_of_element_located((By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_ddlCounty")))
-                county_select = Select(county_select_el)
-                
-                matched_county = None
-                for option in county_select.options:
-                    if county.lower() in option.text.lower():
-                        matched_county = option.text
-                        break
-                
-                if matched_county:
-                    county_select.select_by_visible_text(matched_county)
-                else:
-                    print(f"  ⚠️ County {county} not found.")
-                    return []
-
-                method_select_el = self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_ddlSearchType")
-                method_select = Select(method_select_el)
-                method_select.select_by_visible_text("STREET ADDRESS")
-                
-                # Click Continue
-                continue_ids = self.selectors.get("pages", {}).get("selection", {}).get("continue_btn_ids", [
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StartNavigationTemplateContainerID_btnContinue",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton"
-                ])
-                if not self._click_btn_robust(wait, continue_ids):
-                    print("    ⚠️ Could not click Continue button.")
-                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Continue button click failed")
-                    continue
-
-                # Step 2: Search Criteria
-                name_input_ids = self.selectors.get("pages", {}).get("search", {}).get("street_name_ids", [
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetName",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetName",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetName_0"
-                ])
-                name_field, name_id = self._find_element_robust(wait, name_input_ids)
-                
-                if not name_field:
-                    print(f"    ⚠️ Could not find street name input field.")
-                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Street name input field missing")
-                    continue
-
-                # Clear number
-                num_field_ids = self.selectors.get("pages", {}).get("search", {}).get("street_number_ids", [
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchType_Street_txtStreetNumber",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucEnterData_txtStreetNumber",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_txtStreetNumber_0"
-                ])
-                for n_id in num_field_ids:
-                    try:
-                        f = self.driver.find_element(By.ID, n_id)
-                        f.clear()
-                    except: continue
-                
-                name_field.clear()
-                name_field.send_keys(street_query)
-                
-                # Click Search
-                search_btn_ids = self.selectors.get("pages", {}).get("search", {}).get("search_btn_ids", [
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_StepNextButton",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_btnStepNextButton",
-                    "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_StepNavigationTemplateContainerID_ContinueButton"
-                ])
-                if not self._click_btn_robust(wait, search_btn_ids):
-                    print("    ⚠️ Could not click Search button.")
-                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Search button click failed")
-                    continue
-
-                # Step 3: Extract Bulk Data
-                time.sleep(2)
-                if "No records found" in self.driver.page_source:
-                    print(f"  ⚠️ No records found for '{street_query}'.")
-                    continue
-
-                results = []
-                
-                # Check for single result
-                if "lblOwnerName_0" in self.driver.page_source:
-                    print(f"    🏠 Single result.")
-                    try:
-                        owner = self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblOwnerName_0").text.strip()
-                        address = self.driver.find_element(By.ID, "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucDetailsSearch_dlstDetaisSearch_lblPremisesAddress_0").text.strip()
-                        results.append({'owner_name': owner, 'address': address, 'county': county})
-                        return results
-                    except: pass
-
-                # Grid results
-                try:
-                    table_id = "cphMainContentArea_ucSearchType_wzrdRealPropertySearch_ucSearchResult_gv_SearchResult"
-                    # Use a shorter wait specifically for the table, since missing table = 0 results
-                    short_wait = WebDriverWait(self.driver, 3)
-                    short_wait.until(EC.presence_of_element_located((By.ID, table_id)))
-                    
-                    page_num = 1
-                    max_pages = 20000  # Practically infinite for all MD streets
-
-                    while page_num <= max_pages:
-                        table = self.driver.find_element(By.ID, table_id)
-                        rows = table.find_elements(By.TAG_NAME, "tr")
-                        
-                        # Count data rows (exclude header and pager rows)
-                        data_rows = [r for r in rows[1:] if "PagerStyle" not in (r.get_attribute("class") or "")]
-                        print(f"    📄 Page {page_num}: {len(data_rows)} rows")
-                        
-                        for row in data_rows:
-                            cells = row.find_elements(By.TAG_NAME, "td")
-                            if len(cells) >= 3:
-                                owner = cells[0].text.strip()
-                                street_addr = cells[2].text.strip()
-                                # Validate: skip pager artifacts and header rows
-                                # Pager rows show up as "1 2 3 4 5 6" or single digits
-                                if not owner or not street_addr:
-                                    continue
-                                if owner == "Name" or owner == "Account Id":
-                                    continue
-                                # Skip if owner is pure digits (pager numbers)
-                                if owner.replace(" ", "").isdigit():
-                                    continue
-                                # Skip if address is a single digit (pager cell)
-                                if street_addr.isdigit() and len(street_addr) <= 2:
-                                    continue
-                                results.append({'owner_name': owner, 'address': street_addr, 'county': county})
-                        
-                        # Try to navigate to next page
-                        next_page_found = False
-                        target_page = page_num + 1
-                        try:
-                            # Look for ALL pager rows (top and bottom)
-                            pager_rows = self.driver.find_elements(By.CSS_SELECTOR, "tr.PagerStyle")
-                            if not pager_rows:
-                                # Also try finding pager by looking at top and bottom of table
-                                pager_rows = self.driver.find_elements(By.XPATH, 
-                                    f"//table[@id='{table_id}']//tr[last()]")
-                            
-                            for pager in pager_rows:
-                                if next_page_found: break
-                                all_links = pager.find_elements(By.TAG_NAME, "a")
-                                
-                                # Strategy 1: Look for numbered page links (2, 3, 4...)
-                                for link in all_links:
-                                    link_text = link.text.strip()
-                                    if link_text.isdigit() and int(link_text) == target_page:
-                                        print(f"    ➡️  Clicking next page link: {link_text}")
-                                        # Use JS click to avoid "element intercepted" by header banner
-                                        self.driver.execute_script("arguments[0].click();", link)
-                                        time.sleep(3) # Wait for postback
-                                        wait.until(EC.presence_of_element_located((By.ID, table_id)))
-                                        next_page_found = True
-                                        break
-                                
-                                # Strategy 2: Look for "..." ellipsis link
-                                if not next_page_found:
-                                    for link in all_links:
-                                        if link.text.strip() == "...":
-                                            print(f"    ➡️  Clicking ellipsis link to show more pages...")
-                                            self.driver.execute_script("arguments[0].click();", link)
-                                            time.sleep(3)
-                                            wait.until(EC.presence_of_element_located((By.ID, table_id)))
-                                            next_page_found = True
-                                            break
-                                
-                                # Strategy 3: Look for "Next" or ">" links
-                                if not next_page_found:
-                                    for link in all_links:
-                                        lt = link.text.strip()
-                                        if lt in ("Next", ">", ">>", "›", "Next >"):
-                                            print(f"    ➡️  Clicking '{lt}' link...")
-                                            self.driver.execute_script("arguments[0].click();", link)
-                                            time.sleep(3)
-                                            wait.until(EC.presence_of_element_located((By.ID, table_id)))
-                                            next_page_found = True
-                                            break
-                        except Exception as pe:
-                            print(f"    ⚠️ Pager error on page {page_num}: {pe}")
-                            pass
-                        
-                        if not next_page_found:
-                            break
-                        page_num += 1
-                    
-                    if results:
-                        print(f"    ✅ Total extracted from all {page_num} page(s): {len(results)} properties")
-                        return results
-
-                except TimeoutException:
-                    print(f"    ⚠️ No results table found (Timeout). Assuming 0 properties.")
-                    return []
-                    self.diagnostics.capture_failure_state(self.driver, street_query, county, "Timeout waiting for search results")
-                    continue
-
-            except Exception as e:
-                print(f"    ⚠️ Attempt Error: {e}")
-                continue
-        
-        return []
 
     def _not_found_result(self) -> Dict:
         """Return not found result."""
@@ -1148,16 +1080,6 @@ class RaceEthnicityPredictor:
              
         return {'is_indian': False, 'is_hindu': False, 'category': 'Unknown'}
 
-        if s in sikh:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
-        if s in muslim:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
-        if s in christian:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
-        if s in hindu:
-             return {'is_indian': True, 'is_hindu': True, 'category': 'Hindu'}
-             
-        return {'is_indian': False, 'is_hindu': False, 'category': 'Unknown'}
 
     def predict_race(self, full_name: str) -> Dict[str, any]:
         """

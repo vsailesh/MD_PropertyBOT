@@ -41,7 +41,7 @@ class StreetNameCleaner:
 
     # Comprehensive street suffixes from SDAT
     SUFFIXES = {
-        'AVE', 'AVENUE', 'ST', 'STREET', 'DR', 'DRIVE', 'RD', 'ROAD',
+        'AVE', 'AVENUE', 'AV', 'ST', 'STREET', 'DR', 'DRIVE', 'RD', 'ROAD',
         'LN', 'LANE', 'WAY', 'CT', 'COURT', 'PL', 'PLACE', 'CIR', 'CIRCLE',
         'BLVD', 'BOULEVARD', 'TRL', 'TRAIL', 'LOOP', 'TER', 'TERRACE',
         'PK', 'PIKE', 'HWY', 'HIGHWAY', 'PKWY', 'PARKWAY', 'PATH', 'ROW',
@@ -61,7 +61,21 @@ class StreetNameCleaner:
         'STEA', 'STEAK', 'STR', 'STRA', 'STRAV', 'STRAVE', 'STRAVENUE',
         'STRAVN', 'STRVENUE', 'TRCE', 'TRACE', 'TRFY', 'TRAFFICWAY',
         'UN', 'UNION', 'VLY', 'VALLEY', 'VL', 'VILLE', 'VW', 'VIEW',
-        'WALK', 'WALL', 'WAY', 'WELL', 'WELLS', 'WING'
+        'VLY', 'VALLEY', 'VL', 'VILLE', 'VW', 'VIEW', 'VIS', 'VISTA',
+        'WALK', 'WALL', 'WAY', 'WELL', 'WELLS', 'WING', 'STR', 'STRA', 'STRAV',
+        'STRAVE', 'STRAVENUE', 'STRAVN', 'STRVENUE'
+    }
+
+    # Unit indicators to be stripped (along with everything after them)
+    UNIT_INDICATORS = {
+        'STE', 'SUITE', 'UNIT', 'APT', 'APARTMENT', 'BSMT', 'BASEMENT',
+        'FL', 'FLOOR', 'RM', 'ROOM', 'BLDG', 'BUILDING', 'REAR', 'LOBBY',
+        'OFFICE', 'PENTHOUSE', 'PH'
+    }
+
+    # Route prefixes (numbers following these are part of the street name)
+    ROUTE_PREFIXES = {
+        'MD', 'US', 'RT', 'ROUTE', 'STATE', 'SR', 'I', 'HWY', 'HIGHWAY'
     }
 
     # Direction indicators
@@ -168,6 +182,19 @@ class StreetNameCleaner:
                 cleaned_parts.append(clean_part)
                 continue
 
+            # NEW: Stop if we hit a unit indicator
+            if clean_part in self.UNIT_INDICATORS:
+                break
+
+            # NEW: Strip trailing numbers unless they follow a route prefix
+            if clean_part.isdigit() and not self.ORDINAL_PATTERN.match(clean_part):
+                prev_part = cleaned_parts[-1] if cleaned_parts else ""
+                if prev_part not in self.ROUTE_PREFIXES:
+                    # If this is a trailing number after a non-route name, it's likely a unit
+                    # We only skip it if it's not the ONLY word so far (e.g., "1" is handled later)
+                    if cleaned_parts:
+                        break
+
             # Remove suffixes
             if clean_part in self.SUFFIXES:
                 continue
@@ -190,6 +217,13 @@ class StreetNameCleaner:
 
         # Final cleanup of multiple spaces
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+
+        # SDAT Rule: Search term must be descriptive. 
+        # Reject single letters or purely numeric names that aren't ordinals.
+        if len(cleaned) <= 1:
+            return ""
+        if cleaned.isdigit():
+            return ""
 
         return cleaned
 

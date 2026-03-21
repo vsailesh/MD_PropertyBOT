@@ -177,19 +177,17 @@ class RobustBulkSearch:
                     except Exception as e:
                         print(f"   ⚠️ Could not save duplicates report: {e}")
 
-            # Update streets with cleaned names
-            cleaned_streets = []
+            # Update streets with cleaned names and ensure they are tuples (street_name, county)
+            streets = []
             for item in streets_list:
                 cleaned_name = self.street_cleaner.clean_street_name(item['street_name'])
                 if cleaned_name and cleaned_name != 'UNKNOWN':
-                    item['street_name'] = cleaned_name
-                    cleaned_streets.append(item)
+                    streets.append((cleaned_name, item['county']))
 
-            invalid_removed = original_count - len(cleaned_streets)
+            invalid_removed = original_count - len(streets)
             if invalid_removed > 0:
                 print(f"   Removed: {invalid_removed} invalid street names")
 
-            streets = cleaned_streets
             print(f"   ✅ After cleaning: {len(streets)} streets")
 
         # Step 2: Apply No Result filter if enabled
@@ -278,9 +276,8 @@ class RobustBulkSearch:
 
     def _worker_loop(self, worker_id: int, batch_id: int, shared_state: dict):
         """Worker thread loop to process pending streets."""
-        # Each thread gets its own browser to avoid memory/session crosstalk
+        # Each thread gets its own session-based scraper
         scraper = SDATAutoScraper(headless=True)
-        scraper.start_driver()
         
         try:
             while not self._shutdown_requested:
@@ -335,20 +332,11 @@ class RobustBulkSearch:
                         error=str(e)
                     )
 
-                    # Auto-heal the headless browser if it crashed
-                    if "driver" in str(e).lower() or "session" in str(e).lower():
-                        print(f"    🔄 Restarting scraper {worker_id}...")
-                        try:
-                            scraper.stop_driver()
-                            time.sleep(2)
-                            scraper.start_driver()
-                        except Exception as restart_error:
-                            print(f"    ⚠️ Scraper restart failed: {restart_error}")
                     continue
 
         finally:
-            if scraper:
-                scraper.stop_driver()
+            # Scraper cleanup (session handled by GC)
+            pass
 
 
     def run_batch(self, batch_id: int, save_interval: int = 10,
@@ -376,9 +364,7 @@ class RobustBulkSearch:
         # Reset any stuck in-progress items from previous crashes
         self.db.reset_in_progress_streets(batch_id)
 
-        print("⚙️  Pre-warming ChromeDriver cache...")
-        from webdriver_manager.chrome import ChromeDriverManager
-        ChromeDriverManager().install()
+        # No longer pre-warming Chrome
 
         shared_state = {
             'lock': threading.Lock(),

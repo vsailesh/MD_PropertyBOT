@@ -7,6 +7,7 @@ Provides atomic writes, batch processing, and crash recovery.
 import sqlite3
 import json
 import os
+import re
 import hashlib
 import threading
 from datetime import datetime
@@ -93,10 +94,13 @@ class PropertyDatabase:
                     race_method TEXT,
                     is_hindu BOOLEAN DEFAULT 0,
                     sub_category TEXT,
+                    -- Geocoding fields
+                    latitude REAL,
+                    longitude REAL,
                     -- Metadata
                     batch_id INTEGER,
                     checksum TEXT,
-                    UNIQUE(street_name, county, address)
+                    UNIQUE(county, owner_name, address)
                 )
             """)
 
@@ -150,6 +154,15 @@ class PropertyDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_progress_status ON search_progress(status)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_progress_street_county ON search_progress(street_name, county)")
 
+            # Migration: Add latitude/longitude if they don't exist
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(properties)")
+            columns = [info[1] for info in cursor.fetchall()]
+            if 'latitude' not in columns:
+                conn.execute("ALTER TABLE properties ADD COLUMN latitude REAL")
+            if 'longitude' not in columns:
+                conn.execute("ALTER TABLE properties ADD COLUMN longitude REAL")
+
             # Set schema version
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS schema_info (
@@ -161,6 +174,33 @@ class PropertyDatabase:
                 INSERT OR IGNORE INTO schema_info (key, value)
                 VALUES ('version', ?)
             """, (self.SCHEMA_VERSION,))
+
+    @staticmethod
+    def normalize_text(text: str) -> str:
+        """Collapse multiple spaces and trim."""
+        if not text or not isinstance(text, str):
+            return text
+        return re.sub(r'\s+', ' ', text).strip()
+
+    @staticmethod
+    def normalize_county(name: str) -> str:
+        """
+        Normalize county names to a consistent Title Case format
+        without the redundant " County" suffix.
+        """
+        if not name or not isinstance(name, str):
+            return name
+        
+        name = name.strip()
+        
+        # Special case for Baltimore City
+        if "BALTIMORE CITY" in name.upper():
+            return "Baltimore City"
+            
+        # Remove " COUNTY" suffix if present
+        name = re.sub(r'(?i)\s*COUNTY\s*', '', name).strip()
+        
+        return name.title()
 
     # ============ BATCH MANAGEMENT ============
 
@@ -248,18 +288,29 @@ class PropertyDatabase:
             batch_id: Batch ID to associate with
         """
         with self._transaction() as conn:
-            # Update batch total
-            conn.execute(
-                "UPDATE batches SET total_streets = total_streets + ? WHERE id = ?",
-                (len(streets), batch_id)
-            )
-
-            # Insert pending search tasks
+            # Insert pending search tasks, reassigning them to the new batch if not completed
             for street_name, county in streets:
+                norm_street = self.normalize_text(street_name).upper()
+                norm_county = self.normalize_county(county)
                 conn.execute("""
-                    INSERT OR IGNORE INTO search_progress (street_name, county, batch_id)
+                    INSERT INTO search_progress (street_name, county, batch_id)
                     VALUES (?, ?, ?)
-                """, (street_name.upper(), county, batch_id))
+                    ON CONFLICT(street_name, county) DO UPDATE SET
+                        batch_id = EXCLUDED.batch_id,
+                        status = 'pending',
+                        started_at = NULL,
+                        completed_at = NULL,
+                        error_message = NULL,
+                        properties_found = 0
+                    WHERE search_progress.status != 'completed'
+                """, (norm_street, norm_county, batch_id))
+            
+            # Update correct batch total
+            true_total = conn.execute("SELECT COUNT(*) FROM search_progress WHERE batch_id = ?", (batch_id,)).fetchone()[0]
+            conn.execute(
+                "UPDATE batches SET total_streets = ? WHERE id = ?",
+                (true_total, batch_id)
+            )
 
     def get_next_pending_street(self, batch_id: Optional[int] = None) -> Optional[Dict]:
         """
@@ -409,7 +460,7 @@ class PropertyDatabase:
 
     def _calculate_checksum(self, record: Dict) -> str:
         """Calculate checksum for a property record."""
-        key_fields = f"{record.get('owner_name', '')}{record.get('address', '')}{record.get('street_name', '')}{record.get('county', '')}"
+        key_fields = f"{record.get('county', '')}{record.get('owner_name', '')}{record.get('address', '')}"
         return hashlib.md5(key_fields.encode()).hexdigest()
 
     def add_properties(self, properties: List[Dict], batch_id: int) -> int:
@@ -437,18 +488,18 @@ class PropertyDatabase:
                          is_hindu, sub_category, batch_id, checksum)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
-                        prop.get('street_name', '').upper(),
-                        prop.get('county', ''),
-                        prop.get('owner_name'),
-                        prop.get('address'),
-                        prop.get('city'),
+                        self.normalize_text(prop.get('street_name', '')).upper(),
+                        self.normalize_county(prop.get('county', '')),
+                        self.normalize_text(prop.get('owner_name')),
+                        self.normalize_text(prop.get('address')),
+                        self.normalize_text(prop.get('city')),
                         prop.get('state', 'MD'),
-                        prop.get('zip_code'),
-                        prop.get('source_street', '').upper(),
+                        self.normalize_text(prop.get('zip_code')),
+                        self.normalize_text(prop.get('source_street', '')).upper(),
                         prop.get('predicted_race'),
                         prop.get('race_confidence'),
                         prop.get('race_method'),
-                        1 if prop.get('is_hindu') else 0,
+                        prop.get('is_hindu', 0),
                         prop.get('sub_category'),
                         batch_id,
                         checksum
@@ -790,8 +841,10 @@ class SearchJobManager:
             county = str(row[county_col]).strip() if county_col else "Unknown"
 
             if street and street.lower() not in ('nan', 'none', ''):
-                # Apply Canonicalization
-                canonical_street = SDATFormatter.format_address(street)['street_name']
+                # Apply new strict StreetNameCleaner logic
+                from src.street_name_cleaner import StreetNameCleaner
+                cleaner = StreetNameCleaner()
+                canonical_street = cleaner.clean_street_name(street)
                 if canonical_street:
                     streets.append((canonical_street, county))
 
@@ -814,18 +867,40 @@ class SearchJobManager:
             metadata={'total_streets': len(streets)}
         )
 
-        # Filter out already-searched streets
-        existing = self.db.get_all_properties()
-        if not existing.empty:
-            existing_streets = set(existing['street_name'].str.upper())
-            new_streets = [s for s in streets if s[0].upper() not in existing_streets]
-            print(f"Filtered out {len(streets) - len(new_streets)} already-searched streets")
+        # Filter out already-searched streets efficiently using search_progress
+        with self.db._transaction() as conn:
+            # Get existing completions with county for accurate cross-county coverage
+            completed_df = pd.read_sql_query("SELECT street_name, county FROM search_progress WHERE status = 'completed'", conn)
+            
+        if not completed_df.empty:
+            # Use (street, county) tuple as key to allow same street name in different counties
+            existing_keys = set()
+            for _, r in completed_df.iterrows():
+                s = str(r['street_name']).upper().strip()
+                c = self.db.normalize_county(str(r['county'])).upper()
+                existing_keys.add((s, c))
+            
+            new_streets = []
+            for item in streets:
+                # Handle both tuple and dict formats
+                if isinstance(item, tuple):
+                    s, c = str(item[0]).upper().strip(), self.db.normalize_county(str(item[1])).upper()
+                else:
+                    s = str(item.get('street_name', '')).upper().strip()
+                    c = self.db.normalize_county(str(item.get('county', 'Unknown'))).upper()
+                
+                if (s, c) not in existing_keys:
+                    new_streets.append(item)
+                
+            print(f"Filtered out {len(streets) - len(new_streets)} already-completed street/county pairs")
             
             # Additional de-duplication within the incoming batch itself
             unique_streets = []
             seen = set()
             for s, c in new_streets:
-                key = (s.upper(), c.upper())
+                sk = str(s).upper().strip()
+                ck = self.db.normalize_county(str(c)).upper()
+                key = (sk, ck)
                 if key not in seen:
                     seen.add(key)
                     unique_streets.append((s, c))
@@ -835,7 +910,7 @@ class SearchJobManager:
 
         self.db.add_streets_to_batch(streets, batch_id)
 
-        # Update batch total
+        # Ensure correct batch totals are initialized
         self.db.update_batch_progress(batch_id, streets_completed=0)
 
         return batch_id

@@ -143,6 +143,8 @@ class RadiusStreetGatherer:
         [out:json][timeout:180];
         (
           way(around:{radius_meters},{lat},{lon})[highway~"^({highway_filter})$"]["name"];
+          way(around:{radius_meters},{lat},{lon})["addr:street"];
+          node(around:{radius_meters},{lat},{lon})["addr:street"];
         );
         out center;
         """

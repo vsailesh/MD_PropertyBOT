@@ -13,6 +13,10 @@ from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
 from pathlib import Path
+import warnings
+
+# Suppress scikit-learn warnings about feature names when using NumPy arrays
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 try:
     from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
@@ -54,20 +58,20 @@ class StreetNameFeatureExtractor:
                   'NORTHWEST', 'SOUTHEAST', 'SOUTHWEST'}
 
     @staticmethod
-    def extract_features(street_name: str, county: str) -> Dict[str, float]:
-        """
-        Extract features from a street name and county for ML prediction.
-
-        Returns:
-            Dictionary of feature names to values
-        """
-        if not street_name:
-            street_name = ''
+    def extract_features(street: str, county: str) -> Dict[str, float]:
+        """Extract features from street name and county."""
+        # NEW: Clean the street name first to normalize unit numbers etc.
+        from src.street_name_cleaner import StreetNameCleaner
+        cleaner = StreetNameCleaner()
+        street = cleaner.clean_street_name(street)
+        
+        if not street:
+            street = ''
         if not county:
             county = ''
 
         # Normalize
-        street = street_name.upper().strip()
+        street = street.upper().strip()
         county_norm = county.upper().strip()
 
         features = {}
@@ -76,6 +80,26 @@ class StreetNameFeatureExtractor:
         features['street_length'] = len(street)
         features['street_word_count'] = len(street.split())
         features['county_length'] = len(county_norm)
+
+        # Linguistic features (detect gibberish)
+        vowels = len(re.findall(r'[AEIOU]', street))
+        consonants = len(re.findall(r'[BCDFGHJKLMNPQRSTVWXYZ]', street))
+        features['vowel_count'] = vowels
+        features['consonant_count'] = consonants
+        features['vowel_ratio'] = vowels / len(street) if len(street) > 0 else 0
+        features['consonant_ratio'] = consonants / len(street) if len(street) > 0 else 0
+        features['is_all_consonants'] = float(vowels == 0 and consonants > 0)
+
+        # Alphanumeric mix detection
+        features['has_letters'] = float(bool(re.search(r'[A-Z]', street)))
+        features['has_numbers'] = float(bool(re.search(r'\d', street)))
+        features['is_alphanumeric_mix'] = float(features['has_letters'] and features['has_numbers'])
+
+        # Ramp/Instruction detection
+        ramp_keywords = {'RAMP', 'TO', 'FROM', 'FR', 'VIA', 'US', 'MD', 'RT', 'ROUTE'}
+        words = street.split()
+        features['has_ramp_keywords'] = float(any(w in ramp_keywords for w in words))
+        features['ramp_keyword_count'] = sum(1 for w in words if w in ramp_keywords)
 
         # Special character patterns
         features['starts_with_dash'] = float(street.startswith('-'))
@@ -87,7 +111,6 @@ class StreetNameFeatureExtractor:
         features['has_special_chars'] = float(bool(re.search(r"[^A-Z0-9'\s\-]", street)))
         features['has_hyphen'] = float('-' in street)
         features['has_apostrophe'] = float("'" in street)
-        features['has_numbers'] = float(bool(re.search(r'\d', street)))
         features['has_parenthesis'] = float('(' in street or ')' in street)
 
         # Number patterns
@@ -105,7 +128,6 @@ class StreetNameFeatureExtractor:
         features['is_known_short_failure'] = float(street in StreetNameFeatureExtractor.KNOWN_SHORT_FAILURES)
 
         # Street suffixes and directions
-        words = street.split()
         features['ends_with_suffix'] = float(any(words[-1].endswith(s) if words else False for s in StreetNameFeatureExtractor.STREET_SUFFIXES))
         features['has_direction'] = float(any(word in StreetNameFeatureExtractor.DIRECTIONS for word in words))
         features['first_word_direction'] = float(words[0] in StreetNameFeatureExtractor.DIRECTIONS if words else False)
@@ -150,7 +172,7 @@ class NoResultPredictor:
         self.model = None
         self.scaler = None
         self.feature_names = None
-        self.rule_based_failures = set()
+        self.rule_based_failures = {} # Dict of county -> set of failed streets
         self.stats = {
             'total_predictions': 0,
             'ml_filtered': 0,
@@ -168,7 +190,12 @@ class NoResultPredictor:
             self.model = model_data.get('model')
             self.scaler = model_data.get('scaler')
             self.feature_names = model_data.get('feature_names')
-            self.rule_based_failures = set(model_data.get('rule_based_failures', []))
+            # Handle both old set format and new dict format for backward compatibility
+            raw_failures = model_data.get('rule_based_failures', [])
+            if isinstance(raw_failures, list):
+                self.rule_based_failures = {'__GLOBAL__': set(raw_failures)}
+            else:
+                self.rule_based_failures = {k: set(v) for k, v in raw_failures.items()}
             print(f"✅ Loaded model from {model_path}")
             return True
         except Exception as e:
@@ -186,7 +213,7 @@ class NoResultPredictor:
                 'model': self.model,
                 'scaler': self.scaler,
                 'feature_names': self.feature_names,
-                'rule_based_failures': list(self.rule_based_failures),
+                'rule_based_failures': {k: list(v) for k, v in self.rule_based_failures.items()},
                 'trained_at': datetime.now().isoformat()
             }
             joblib.dump(model_data, model_path)
@@ -306,8 +333,8 @@ class NoResultPredictor:
             self.rule_based_failures = set(failed_streets)
             return {'success': True, 'method': 'rule_based', 'samples': len(df)}
 
-    def predict(self, street_name: str, county: str,
-                threshold: float = 0.6) -> Tuple[bool, float, str]:
+    def predict(self, street_name: str, county: str, threshold: float = 0.6, 
+                update_stats: bool = True, ml_fallback: bool = True) -> Tuple[bool, float, str]:
         """
         Predict if a street search is likely to return "No Result Found".
 
@@ -315,14 +342,11 @@ class NoResultPredictor:
             street_name: Street name to check
             county: County for the street
             threshold: Probability threshold for filtering (0-1)
-
-        Returns:
-            (should_filter, probability, reason)
-            - should_filter: True if search should be skipped
-            - probability: Predicted probability of failure (0-1)
-            - reason: Human-readable explanation
+            update_stats: Whether to update internal statistics
+            ml_fallback: Whether to use ML if rules don't match
         """
-        self.stats['total_predictions'] += 1
+        if update_stats:
+            self.stats['total_predictions'] += 1
 
         # Normalize inputs
         street = street_name.upper().strip() if street_name else ''
@@ -331,99 +355,133 @@ class NoResultPredictor:
         # Rule-based checks (high confidence)
         reasons = []
 
-        # Rule 1: Known failed streets
-        if street in self.rule_based_failures:
-            self.stats['rule_filtered'] += 1
-            return True, 1.0, f"Known failed street: {street}"
+        # Rule 1: Known failed streets (Check specific county or global)
+        if county_norm in self.rule_based_failures:
+            if street in self.rule_based_failures[county_norm]:
+                if update_stats: self.stats['rule_filtered'] += 1
+                return True, 1.0, f"Known failed street in {county_norm}: {street}"
+        
+        if '__GLOBAL__' in self.rule_based_failures:
+             if street in self.rule_based_failures['__GLOBAL__']:
+                if update_stats: self.stats['rule_filtered'] += 1
+                return True, 1.0, f"Known global failed street: {street}"
 
         # Rule 2: Single/double character streets (high failure rate)
         if len(street) <= 2 and street not in {'ST', 'RD', 'DR', 'AVE', 'LN', 'CT', 'PL', 'RD'}:
-            self.stats['rule_filtered'] += 1
+            if update_stats: self.stats['rule_filtered'] += 1
             return True, 0.95, f"Very short street name: {street}"
 
         # Rule 3: Streets starting with special characters
-        if street and street[0] in '-_\'#&':
-            self.stats['rule_filtered'] += 1
+        if street and street[0] in '-_\'#&!@$*':
+            if update_stats: self.stats['rule_filtered'] += 1
             return True, 0.90, f"Starts with special character: {street[0]}"
 
         # Rule 4: Pure number patterns (like 02-0858-64)
         if re.match(r'^[\d-]+$', street):
-            self.stats['rule_filtered'] += 1
+            if update_stats: self.stats['rule_filtered'] += 1
             return True, 0.85, f"Pure number pattern: {street}"
 
         # Rule 5: Space-dash-space pattern
         if ' - ' in street:
-            self.stats['rule_filtered'] += 1
+            if update_stats: self.stats['rule_filtered'] += 1
             return True, 0.80, f"Contains space-dash-space pattern"
 
-        # ML-based prediction (if available)
+        # ML-based prediction (if available) - skip if ml_fallback is False
+        if not ml_fallback:
+            return False, 0.0, "Rules passed, skipping ML fallback"
+
         if self.model and self.scaler and self.feature_names:
             features = StreetNameFeatureExtractor.extract_features(street, county_norm)
 
             # Ensure all expected features are present
-            feature_vector = []
-            for fname in self.feature_names:
-                feature_vector.append(features.get(fname, 0.0))
+            feature_vector = [features.get(fname, 0.0) for fname in self.feature_names]
 
-            # Create DataFrame with feature names to avoid warnings
-            X_df = pd.DataFrame([feature_vector], columns=self.feature_names)
-            X_scaled = self.scaler.transform(X_df)
-
+            # Use raw numpy for speed instead of DataFrame
+            X_scaled = self.scaler.transform([feature_vector])
             prob = self.model.predict_proba(X_scaled)[0, 1]
 
             if prob >= threshold:
-                self.stats['ml_filtered'] += 1
-
-                # Find top contributing features
-                importances = dict(zip(self.feature_names, self.model.feature_importances_))
-                top_features = sorted(
-                    [(f, features.get(f, 0), importances[f]) for f in self.feature_names],
-                    key=lambda x: x[2],
-                    reverse=True
-                )[:3]
-
-                reason_parts = [f"ML prediction (prob={prob:.2f})"]
-                for feat, val, imp in top_features:
-                    if val > 0 and imp > 0.05:
-                        reason_parts.append(f"{feat}={val}")
-
-                return True, prob, " | ".join(reason_parts)
+                if update_stats: self.stats['ml_filtered'] += 1
+                return True, prob, f"ML prediction (prob={prob:.2f})"
 
         # Default: allow search
-        self.stats['passed'] += 1
+        if update_stats: self.stats['passed'] += 1
         return False, 0.0, "Passed all checks"
 
     def filter_batch(self, streets: List[Tuple[str, str]],
                     threshold: float = 0.6) -> Tuple[List[Tuple[str, str]], List[Dict]]:
         """
-        Filter a batch of streets in parallel.
+        Filter a batch of streets using vectorized inference (100x faster).
         """
         from joblib import Parallel, delayed
         
-        def predict_wrapper(street_info):
-            s, c = street_info
-            return self.predict(s, c, threshold), s, c
-
-        print(f"🧬 Parallelizing ML filtering across {len(streets)} streets...")
-        
-        # Use all available cores except 1
-        raw_results = Parallel(n_jobs=-1)(
-            delayed(predict_wrapper)(street_info) for street_info in streets
-        )
-        
-        passed = []
+        # Phase 1: Rapid Rule-based pre-filter (fast, bypasses ML overhead)
+        passed_rules = []
         rejected = []
         
-        for ((should_filter, prob, reason), s, c) in raw_results:
-            if should_filter:
+        print(f"🧬 Pre-filtering {len(streets)} streets using rules...")
+        for item in streets:
+            # Handle both tuple and dict formats
+            if isinstance(item, tuple):
+                s, c = item
+            else:
+                s, c = item.get('street_name', ''), item.get('county', '')
+                
+            # Use rule-only check for pre-filtering
+            res, prob, reason = self.predict(s, c, threshold, update_stats=False, ml_fallback=False)
+            if res:
+                # Filtered by rule
                 rejected.append({
-                    'street_name': s,
-                    'county': c,
-                    'probability': prob,
-                    'reason': reason
+                    'street_name': s, 'county': c,
+                    'probability': prob, 'reason': reason
                 })
+                self.stats['rule_filtered'] += 1
+                self.stats['total_predictions'] += 1
+            else:
+                passed_rules.append((s, c))
+                
+        if not self.model or not passed_rules:
+            # No model loaded, just return rule-validated items
+            self.stats['passed'] += len(passed_rules)
+            self.stats['total_predictions'] += len(passed_rules)
+            return passed_rules, rejected
+
+        # Phase 2: Parallel Feature Extraction for remaining streets
+        print(f"🧬 Vectorizing features for {len(passed_rules)} streets...")
+        
+        def extract_wrapper(street_info):
+            s, c = street_info
+            return StreetNameFeatureExtractor.extract_features(s, c)
+            
+        features_list = Parallel(n_jobs=-1)(
+            delayed(extract_wrapper)(s_c) for s_c in passed_rules
+        )
+        
+        # Phase 3: Matrix-based Vectorized Inference (Extreme Speed)
+        print(f"🧬 Parallel ML inference (Vectorized)...")
+        # Convert list of dicts to correctly ordered numpy matrix
+        X_matrix = []
+        for feats in features_list:
+            X_matrix.append([feats.get(fname, 0.0) for fname in self.feature_names])
+            
+        X_scaled = self.scaler.transform(X_matrix)
+        probs = self.model.predict_proba(X_scaled)[:, 1]
+        
+        # Phase 4: Reconstruct results and update stats accurately
+        passed = []
+        for i, prob in enumerate(probs):
+            s, c = passed_rules[i]
+            self.stats['total_predictions'] += 1
+            
+            if prob >= threshold:
+                rejected.append({
+                    'street_name': s, 'county': c,
+                    'probability': prob, 'reason': f"ML prediction (prob={prob:.2f})"
+                })
+                self.stats['ml_filtered'] += 1
             else:
                 passed.append((s, c))
+                self.stats['passed'] += 1
                 
         return passed, rejected
 

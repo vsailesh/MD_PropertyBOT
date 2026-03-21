@@ -401,7 +401,9 @@ def geocode_hindu_owners(input_file='data/Hindu_Origin_Owners.xlsx',
         try:
             df_existing = pd.read_excel(output_file)
             for _, row in df_existing.iterrows():
-                mask = (df[owner_col] == row[owner_col]) & (df[addr_col] == row[addr_col])
+                mask = (df[owner_col] == row[owner_col]) & \
+                       (df[addr_col] == row[addr_col]) & \
+                       (df[county_col].str.replace(" COUNTY", "", case=False) == str(row.get(county_col, "")).replace(" COUNTY", "").replace(" County", ""))
                 if mask.any():
                     if pd.notnull(row.get('Latitude')):
                         df.loc[mask, 'Latitude'] = row['Latitude']

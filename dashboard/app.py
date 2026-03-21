@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
-import pydeck as pdk
+import folium
+import re
+from streamlit_folium import st_folium
 import os
 
 st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_icon="🏠")
@@ -57,7 +59,7 @@ if not os.path.exists(DATA_FILE):
     DATA_FILE = 'data/Hindu_Origin_Owners.xlsx'
     st.warning("📍 Geocoding is in progress. Showing raw data (map will be empty until coordinates are added).")
 
-@st.cache_data(ttl=60) # Refresh every minute while background script runs
+@st.cache_data
 def load_data(file):
     df = pd.read_excel(file)
 
@@ -86,13 +88,23 @@ def load_data(file):
 
     df.columns = df.columns.astype(str)  # Ensure column names are strings
 
-    # 3. FORMATTING: Title Case for names and addresses
+    # 3. FORMATTING: Title Case and Whitespace Normalization
+    def clean_text(text):
+        if not text or pd.isna(text): return text
+        return re.sub(r'\s+', ' ', str(text).strip()).title()
+
     if 'owner_name' in col_mapping:
-        df[col_mapping['owner_name']] = df[col_mapping['owner_name']].astype(str).str.title()
+        df[col_mapping['owner_name']] = df[col_mapping['owner_name']].apply(clean_text)
     if 'address' in col_mapping:
-        df[col_mapping['address']] = df[col_mapping['address']].astype(str).str.title()
+        df[col_mapping['address']] = df[col_mapping['address']].apply(clean_text)
     if 'county' in col_mapping:
-        df[col_mapping['county']] = df[col_mapping['county']].astype(str).str.title()
+        c_col = col_mapping['county']
+        df[c_col] = df[c_col].astype(str).str.replace(r'(?i)\s*County\s*', '', regex=True).str.strip().str.title()
+        # Special case: ensure "Baltimore City" stays "Baltimore City"
+        df[c_col] = df[c_col].str.replace('Baltimore City', 'Baltimore City', case=False)
+        # Collapse spaces if any in county
+        df[c_col] = df[c_col].str.replace(r'\s+', ' ', regex=True).str.strip()
+
 
     # 4. COORDINATES: Ensure numeric
     if 'latitude' in col_mapping and 'longitude' in col_mapping:
@@ -118,6 +130,7 @@ try:
     owner_col = get_col('owner_name')
     addr_col = get_col('address')
     cat_col = get_col('sub_category')
+    method_col = get_col('Method')
 
     # Check if required columns exist
     if county_col not in df.columns:
@@ -180,117 +193,130 @@ try:
                 st.metric("Top Category", "N/A")
 
         # Map Section
-        st.subheader("📍 Property Distribution & County Boundaries")
+        st.subheader("📍 Property Distribution & Viewport Filtering")
 
         map_df = filtered_df.dropna(subset=[lat_col, lon_col]) if lat_col in filtered_df.columns and lon_col in filtered_df.columns else pd.DataFrame()
 
-        # Load County Boundaries
-        COUNTY_GEOJSON = 'data/maryland-counties.geojson'
-        geojson_data = None
-        if os.path.exists(COUNTY_GEOJSON):
-            import json
-            with open(COUNTY_GEOJSON, 'r') as f:
-                geojson_data = json.load(f)
+        # Initialize map state in session state if not present
+        if 'map_bounds' not in st.session_state:
+            st.session_state.map_bounds = None
 
-        layers = []
-
-        # 1. Base Layer: Standard OpenStreetMap (OSM) Tiles
-        layers.append(pdk.Layer(
-            "TileLayer",
-            data="https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-            get_tile_data=None,
-            min_zoom=0,
-            max_zoom=19,
-            tileSize=256,
-            pickable=False,
-        ))
-
-        # 2. Boundary Layer: Maryland Counties
-        if geojson_data:
-            layers.append(pdk.Layer(
-                "GeoJsonLayer",
-                geojson_data,
-                opacity=0.2,
-                stroked=True,
-                filled=True,
-                extruded=False,
-                wireframe=True,
-                get_fill_color=[100, 100, 255, 40],
-                get_line_color=[150, 150, 150],
-                get_line_width=150,
-                pickable=True,
-            ))
-
-        # 3. Property Layer: Hindu-origin owners
+        # Determine initial center and zoom
+        # Based ONLY on current filters so the baseline HTML stays perfectly consistent during pan/zoom
         if not map_df.empty:
-            # We no longer need jitter for house-level coordinates.
-            # Only apply a tiny jitter for centroid matches if they overlap exactly.
-            import numpy as np
-            map_df = map_df.copy()
-            
-            # Tiny jitter only for centroids (Level 7) to separate overlapping points
-            centroid_mask = map_df['Method'].str.contains('Level 7', na=False)
-            if centroid_mask.any():
-                map_df.loc[centroid_mask, '_plot_lat'] = map_df.loc[centroid_mask, lat_col] + np.random.uniform(-0.001, 0.001, centroid_mask.sum())
-                map_df.loc[centroid_mask, '_plot_lon'] = map_df.loc[centroid_mask, lon_col] + np.random.uniform(-0.001, 0.001, centroid_mask.sum())
-            
-            # Direct matches use exact coordinates
-            if (~centroid_mask).any():
-                map_df.loc[~centroid_mask, '_plot_lat'] = map_df.loc[~centroid_mask, lat_col]
-                map_df.loc[~centroid_mask, '_plot_lon'] = map_df.loc[~centroid_mask, lon_col]
-
-            layers.append(pdk.Layer(
-                "ScatterplotLayer",
-                map_df,
-                get_position=["_plot_lon", "_plot_lat"],
-                get_color=[255, 75, 75, 230],
-                get_radius=50,
-                pickable=True,
-                stroked=True,
-                get_line_color=[255, 255, 255],
-                get_line_width=2,
-                radius_min_pixels=3,
-                radius_max_pixels=8,
-            ))
-
-        # View State
-        if not map_df.empty and lat_col in map_df.columns and lon_col in map_df.columns:
             v_lat, v_lon = map_df[lat_col].mean(), map_df[lon_col].mean()
-            v_zoom = 13
+            v_zoom = 12
         else:
             v_lat, v_lon = 39.0458, -76.6413
             v_zoom = 8
 
-        view_state = pdk.ViewState(
-            latitude=v_lat,
-            longitude=v_lon,
-            zoom=v_zoom,
-            pitch=0,
-        )
+        # We need a dynamic key that changes when filters change to force st_folium to re-render,
+        # otherwise Leaflet tile layers sometimes vanish to a grey void on in-place update.
+        filter_hash = f"{hash(frozenset(selected_county))}_{hash(frozenset(categories))}_{hash(search_query)}"
+        map_key = f"property_map_{filter_hash}"
 
-        # Tooltip logic
-        tooltip_html = f"""
-            <b>Owner:</b> {{{owner_col}}}<br/>
-            <b>SDAT Address:</b> {{{addr_col}}}<br/>
-            <b>Verified Address:</b> {{Geo_Address}}<br/>
-            <b>County:</b> {{{county_col}}}<br/>
-            <b>Match Quality:</b> {{Method}}
-        """
-        tooltip = {
-            "html": tooltip_html,
-            "style": {"backgroundColor": "#1e2130", "color": "white", "border": "1px solid #ff4b4b"}
-        }
 
-        # Use map_style=None to use the custom TileLayer as base
-        st.pydeck_chart(pdk.Deck(
-            layers=layers,
-            initial_view_state=view_state,
-            tooltip=tooltip,
-            map_style=None
-        ))
+        # Prepare plotting coordinates (with jitter for centroids)
+        if not map_df.empty:
+            import numpy as np
+            map_df = map_df.copy()
+            
+            # Use real lat/lon if Method is not Level 7
+            map_df['_plot_lat'] = map_df[lat_col]
+            map_df['_plot_lon'] = map_df[lon_col]
+            
+            # Tiny jitter only for centroids (Level 7) if the column exists
+            if 'Method' in map_df.columns:
+                centroid_mask = map_df['Method'].str.contains('Level 7', na=False)
+                if centroid_mask.any():
+                    # MUST be deterministic to prevent HTML changes & flickering on rerun
+                    np.random.seed(42) 
+                    map_df.loc[centroid_mask, '_plot_lat'] += np.random.uniform(-0.0005, 0.0005, centroid_mask.sum())
+                    map_df.loc[centroid_mask, '_plot_lon'] += np.random.uniform(-0.0005, 0.0005, centroid_mask.sum())
 
-        if map_df.empty:
-            st.info("No coordinates available for the selected filters. The background geocoding script has processed some addresses, but none match your filters yet.")
+        display_map_df = map_df
+
+        # Create Folium Map
+        def create_map(map_data_list, center_lat, center_lon, zoom):
+            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
+            if map_data_list:
+                from folium.plugins import FastMarkerCluster
+                callback = """
+                function (row) {
+                    var marker = L.circleMarker(new L.LatLng(row[0], row[1]), {
+                        color: '#ff4b4b',
+                        fillColor: '#ff4b4b',
+                        fillOpacity: 0.7,
+                        radius: 5,
+                        weight: 1
+                    });
+                    var popupContent = "<b>Owner:</b> " + row[2] + "<br><b>Address:</b> " + row[3];
+                    marker.bindPopup(popupContent, {maxWidth: 300});
+                    return marker;
+                }
+                """
+                FastMarkerCluster(map_data_list, callback=callback).add_to(m)
+            return m
+
+        # Prepare list for FastMarkerCluster (caching requires simple types)
+        if not display_map_df.empty:
+             marker_data = display_map_df[['_plot_lat', '_plot_lon', owner_col, addr_col]].values.tolist()
+        else:
+             marker_data = []
+
+        # Render map with a patched deterministic UUID generator.
+        # This guarantees perfectly identical HTML strings across Streamlit reruns,
+        # which prevents st_folium from unmounting and redrawing the iframe (flickering)!
+        import uuid
+        original_uuid = uuid.uuid4
+        counter = [0]
+        def deterministic_uuid():
+            counter[0] += 1
+            return uuid.UUID(int=counter[0])
+        uuid.uuid4 = deterministic_uuid
+        
+        try:
+            m = create_map(marker_data, v_lat, v_lon, v_zoom)
+    
+            # Render Map 
+            map_data = st_folium(
+                m,
+                key=map_key,
+                height=500,
+                width=700,
+                use_container_width=True,
+                returned_objects=["bounds"]
+            )
+        finally:
+            uuid.uuid4 = original_uuid
+
+        # Viewport Filtering Logic (Automatic)
+        final_filtered_df = filtered_df
+        if map_data and map_data.get("bounds"):
+            bounds = map_data["bounds"]
+            sw = bounds.get("_southWest")
+            ne = bounds.get("_northEast")
+            
+            if sw and ne and sw.get("lat") is not None and ne.get("lat") is not None and sw.get("lng") is not None and ne.get("lng") is not None:
+                lat_min, lat_max = sw["lat"], ne["lat"]
+                lat_max, lat_min = max(lat_min, lat_max), min(lat_min, lat_max) # Handle inverted bounds
+                lon_min, lon_max = sw["lng"], ne["lng"]
+                lon_max, lon_min = max(lon_min, lon_max), min(lon_min, lon_max)
+                
+                # Apply viewport filter to the FULL dataset
+                viewport_mask = (
+                    (filtered_df[lat_col] >= lat_min) & 
+                    (filtered_df[lat_col] <= lat_max) & 
+                    (filtered_df[lon_col] >= lon_min) & 
+                    (filtered_df[lon_col] <= lon_max)
+                )
+                final_filtered_df = filtered_df[viewport_mask]
+                
+                # Show dynamic status
+                st.info(f"📍 Viewport active: showing {len(final_filtered_df):,} of {len(filtered_df):,} properties in this area.")
+
+        if filtered_df.empty:
+            st.info("No coordinates available for the selected filters.")
 
         # Data Table
         st.subheader("📋 Property Details")
@@ -299,16 +325,28 @@ try:
         display_cols = [owner_col, addr_col, county_col]
         if cat_col in df.columns:
             display_cols.append(cat_col)
-
-        display_df = filtered_df[display_cols].copy()
-
-        # Set column names based on how many columns we have
-        if cat_col in df.columns:
-            display_df.columns = ["Owner Name", "Property Address", "County", "Category"]
-        else:
-            display_df.columns = ["Owner Name", "Property Address", "County"]
-
-        st.dataframe(display_df, use_container_width=True)
+        if lat_col in filtered_df.columns and lon_col in filtered_df.columns:
+             display_cols += [lat_col, lon_col]
+        if method_col in filtered_df.columns:
+             display_cols += [method_col]
+        
+        # Map columns to readable names
+        column_config = {
+            owner_col: st.column_config.TextColumn("Owner Name"),
+            addr_col: st.column_config.TextColumn("Property Address"),
+            county_col: st.column_config.TextColumn("County"),
+            cat_col: st.column_config.TextColumn("Category"),
+            lat_col: st.column_config.NumberColumn("Latitude", format="%.5f"),
+            lon_col: st.column_config.NumberColumn("Longitude", format="%.5f"),
+            method_col: st.column_config.TextColumn("Geocoding Method")
+        }
+        
+        st.dataframe(
+            final_filtered_df[display_cols],
+            column_config=column_config,
+            hide_index=True,
+            use_container_width=True
+        )
 
         # Refresh Button
         if st.button("🔄 Refresh Data"):
