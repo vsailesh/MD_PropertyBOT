@@ -1019,8 +1019,8 @@ class RaceEthnicityPredictor:
 
     def _is_hindu_name(self, all_parts: List[str]) -> Dict:
         """
-        Check if any part of the name is a known Hindu first/last name,
-        while strictly disqualifying if any Sikh, Muslim, or Christian markers are present.
+        Check if any part of the name is a known Hindu/Sikh first/last name,
+        while strictly disqualifying if any Muslim or Christian markers are present.
         """
         is_hindu = False
         is_indian = False
@@ -1028,19 +1028,17 @@ class RaceEthnicityPredictor:
         
         # 1. Check for disqualifiers first
         for part in all_parts:
-            if part in self.sikh_names:
-                return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
             if part in self.muslim_names:
                 return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
             if part in self.christian_names:
                 return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
 
-        # 2. Check for Hindu markers (First or Last name)
+        # 2. Check for Hindu/Sikh markers (First or Last name)
         for part in all_parts:
-            if part in self.hindu_first or part in self.hindu_last:
+            if part in self.hindu_first or part in self.hindu_last or part in self.sikh_names:
                 is_hindu = True
                 is_indian = True
-                category = 'Hindu'
+                category = 'Hindu/Sikh'
                 break
                 
         return {
