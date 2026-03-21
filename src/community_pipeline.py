@@ -950,176 +950,137 @@ class SDATAutoScraper:
 
 
 class RaceEthnicityPredictor:
-    """Predict race/ethnicity from owner names using ethnicolr."""
+    """Predict race/ethnicity from owner names using ethnicolr and robust local datasets."""
 
     def __init__(self):
+        # Load local comprehensive dictionaries
+        self.dict_path = "data/hindu_names_dict.json"
+        self.name_dict = {}
+        if os.path.exists(self.dict_path):
+            with open(self.dict_path, 'r') as f:
+                self.name_dict = json.load(f)
+        else:
+            print("⚠️ hindu_names_dict.json not found. Using minimal fallback.")
+            self.name_dict = {"hindu_first_names": [], "hindu_last_names": [], "sikh_names": [], "muslim_names": [], "christian_names": [], "business_markers": [], "noise_words": []}
+
+        # Sets for O(1) lookup
+        self.hindu_first = set(self.name_dict.get('hindu_first_names', []))
+        self.hindu_last = set(self.name_dict.get('hindu_last_names', []))
+        self.sikh_names = set(self.name_dict.get('sikh_names', []))
+        self.muslim_names = set(self.name_dict.get('muslim_names', []))
+        self.christian_names = set(self.name_dict.get('christian_names', []))
+
+        # Basic expanded patterns for general race assignment
+        self.expanded_patterns = {
+            'Asian': [
+                'nguyen', 'kim', 'li', 'wang', 'zhang', 'liu', 'chen', 'yang', 'tan', 'wong', 'lee', 'park', 'choi', 'yamamoto', 'sato', 'suzuki', 'tran', 'lin', 'wu', 'cho', 'vu', 'ngo', 'le', 'pham'
+            ],
+            'Black': [
+                'washington', 'jefferson', 'booker', 'king', 'jackson', 'johnson', 'williams', 'thompson', 'harris', 'robinson', 'white', 'walker', 'scott', 'banks', 'reid'
+            ],
+            'Hispanic': [
+                'garcia', 'rodriguez', 'martinez', 'hernandez', 'lopez', 'gonzalez', 'perez', 'sanchez', 'ramirez', 'torres', 'rivera', 'flores', 'diaz', 'morales', 'reyes', 'ruiz', 'cruz', 'ortiz', 'ramos', 'gomez'
+            ]
+        }
+
         try:
             from ethnicolr import pred_wiki_name
             self.pred_wiki_name = pred_wiki_name
             self.use_ethnicolr = True
-            print("✅ Using ethnicolr for race prediction")
+            print("✅ Using ethnicolr + robust local dict for race prediction")
         except ImportError:
             self.use_ethnicolr = False
-            print("⚠️ ethnicolr not available, using fallback patterns")
-            # Fallback patterns
-            self.surname_patterns = {
-                'Asian': ['nguyen', 'kim', 'li', 'wang', 'zhang', 'liu',
-                         'chen', 'yang', 'tan', 'wong', 'lee', 'park', 'choi', 'yamamoto',
-                         'sato', 'suzuki'],
-                'Indian': ['patel', 'singh', 'kumar', 'gupta', 'shah', 'joshi'],
-                'Black': ['washington', 'jefferson', 'booker', 'king', 'jackson', 'johnson',
-                         'smith', 'brown', 'williams', 'davis', 'harris', 'thomas',
-                         'robinson', 'white'],
-                'Hispanic': ['garcia', 'rodriguez', 'martinez', 'hernandez', 'lopez', 'gonzalez',
-                            'perez', 'sanchez', 'ramirez', 'torres', 'rivera', 'flores',
-                            'diaz', 'morales', 'reyes', 'ruiz', 'cruz', 'ortiz', 'ramos'],
-                'White': ['smith', 'johnson', 'williams', 'brown', 'jones', 'miller', 'davis',
-                         'wilson', 'anderson', 'taylor', 'thomas', 'moore', 'martin',
-                         'lee', 'thompson', 'harris', 'clark', 'lewis', 'robinson'],
-            }
+            print("⚠️ ethnicolr not available, using local dict + fallback patterns")
 
     def _clean_name(self, full_name: str) -> str:
         """Clean SDAT name strings with clinical precision."""
         if not full_name: return ""
         name = full_name.upper()
         
-        # 1. Identify and Tag Business/Technical Entities
         self.is_business_entity = False
-        business_markers = [
-            r'\bINC\b', r'\bLLC\b', r'\bCORP\b', r'\bCORPORATION\b', r'\bLTD\b',
-            r'\bPTNRSHP\b', r'\bPARTNERSHIP\b', r'\bASSN\b', r'\bASSOCIATES\b',
-            r'\bHOLDINGS\b', r'\bPROPERTY\b', r'\bPROPERTIES\b', r'\bHOLDING\b', r'\bHOLDIN\b',
-            r'\bLAND\b', r'\bESTATE\b', r'\bMGMT\b', r'\bMANAGEMENT\b', r'\bINVESTMENTS\b',
-            r'\bTRUSTEE\b', r'\bTRUSTEES\b', r'\bTRUST\b', r'\bFOUNDATION\b'
-        ]
+        business_markers = self.name_dict.get("business_markers", [
+            'INC', 'LLC', 'CORP', 'CORPORATION', 'LTD', 'TRUST'
+        ])
+        
         for marker in business_markers:
-            if re.search(marker, name):
+            if re.search(r'\b' + marker + r'\b', name):
                 self.is_business_entity = True
                 break
 
-        # 2. Remove common noise words
-        noise = business_markers + [
-            r'\bREVOCABLE\b', r'\bLIVING\b', r'\bFAMILY\b', r'\bET AL\b', r'\bETAL\b', 
-            r'\bLIFE ESTATE\b', r'\b&', r'\bAND\b'
-        ]
-        for pattern in noise:
-            name = re.sub(pattern, '', name)
+        noise = business_markers + self.name_dict.get("noise_words", [
+            'ET AL', '&', 'AND', 'JR', 'SR'
+        ])
         
-        # 3. Remove Professional / Suffix Noise (JR, SR, MD, PHD, etc.)
-        suffixes = [
-            r'\bJR\b', r'\bSR\b', r'\bII\b', r'\bIII\b', r'\bIV\b', r'\bV\b',
-            r'\bMD\b', r'\bPHD\b', r'\bESQ\b', r'\bDR\b', r'\bPROF\b'
-        ]
-        for pattern in suffixes:
-            name = re.sub(pattern, '', name)
+        for p in noise:
+            name = re.sub(r'\b' + p + r'\b', '', name)
             
-        # 4. Clean special characters but preserve separators
         name = re.sub(r'[^A-Z\s,-]', '', name)
-        
-        # 5. Collapse multiple spaces
-        name = re.sub(r'\s+', ' ', name).strip()
-        return name
+        return re.sub(r'\s+', ' ', name).strip()
 
-    def _is_indian_surname(self, surname: str) -> Dict:
+    def _is_hindu_name(self, all_parts: List[str]) -> Dict:
         """
-        Check if a surname is typically Indian and identify sub-category.
-        Optimized for 95%+ accuracy for Hindu identification.
+        Check if any part of the name is a known Hindu first/last name,
+        while strictly disqualifying if any Sikh, Muslim, or Christian markers are present.
         """
-        s = surname.lower()
+        is_hindu = False
+        is_indian = False
+        category = 'Unknown'
         
-        # 🟢 CONSOLIDATED HINDU SURNAMES (North, South, East, West, Nepal, Bhutan)
-        # These are high-confidence indicators of Hindu/South Asian origin
-        hindu = [
-            # NORTH & WEST (Hindi, Gujarati, Marathi, Punjabi Hindu)
-            'patel', 'kumar', 'gupta', 'shah', 'joshi', 'devi', 'das', 'sharma', 'agrawal', 'singhal', 
-            'tripathi', 'malhotra', 'kapoor', 'khanna', 'mehta', 'shroff', 'maheshwari', 'agarwal', 
-            'bollu', 'gambhir', 'chhabra', 'anand', 'bakshi', 'bansal', 'bhatia', 'chopra', 'dhawan', 
-            'gandhi', 'goel', 'grover', 'handa', 'jain', 'johar', 'jolly', 'kapur', 'khurana', 'kohli', 
-            'luthra', 'madan', 'mahajan', 'mangal', 'mehra', 'monga', 'oberoi', 'puri', 'sahni', 
-            'sethi', 'sood', 'taneja', 'uppal', 'vohra', 'wadhwa', 'yadav', 'chawla', 'gadkari', 
-            'gokhale', 'karve', 'modi', 'paranjpe', 'ranade', 'tilak', 'vaidya', 'tyagi', 'verma', 
-            'vats', 'shukla', 'mishra', 'pandey', 'tiwari', 'dwivedi', 'chaubey', 'thakur', 'rajput',
-            'mital', 'shrivastava', 'saxena', 'jaitley', 'gadgil', 'pujari', 'vashishta', 'bhardwaj',
-            
-            # SOUTH (Telugu, Tamil, Kannada, Malayalam Hindu)
-            'reddy', 'rao', 'iyer', 'nair', 'menon', 'kulkarni', 'deshpande', 'shetty', 'hegde', 'pai', 
-            'balakrishnan', 'venkatesh', 'nambiar', 'warrier', 'kurup', 'panicker', 'pillai', 'acharya', 
-            'adiga', 'bhat', 'hebbar', 'maiya', 'muralidhar', 'shenoy', 'uudpa', 'vaikunta', 'balaram', 
-            'chetty', 'mudaliar', 'naidu', 'gowda', 'subramanian', 'krishnan', 'raghavan', 'pillay',
-            'murthy', 'srinivasan', 'rangarajan', 'venkat', 'narayanan', 'gopal', 'swamy', 'kalyan',
-            'rajagopalan', 'manian', 'vasudevan', 'ganesan', 'moorthy', 'prabhu', 'kamath', 'kiny',
-            
-            # EAST & BENGALI
-            'chowdhury', 'mukherjee', 'chatterjee', 'banerjee', 'mukhopadhyay', 'chattopadhyay', 
-            'bandyopadhyay', 'gangopadhyay', 'ghosh', 'bose', 'dutta', 'majumdar', 'ray', 'sen', 
-            'guha', 'chakraborty', 'basu', 'sarkar', 'paul', 'mitra', 'bhattacharya', 'mandal',
-            
-            # NEPAL & HILL HINDUS
-            'adhikari', 'thapa', 'gurung', 'bhattarai', 'poudel', 'shrestha', 'dahal', 'aryal', 
-            'basnet', 'magar', 'rai', 'tamang', 'ghimire', 'paudel', 'acharya', 'khadka', 'pant',
-            'karki', 'subedi', 'regmi', 'sapkota', 'dhakal', 'devkota', 'lamsal', 'chalise',
-            
-            # BHUTANESE HINDU NAMES
-            'dorji', 'wangchuk', 'namgyal', 'tshering', 'gyeltshen', 'leki', 'rinzin'
-        ]
+        # 1. Check for disqualifiers first
+        for part in all_parts:
+            if part in self.sikh_names:
+                return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
+            if part in self.muslim_names:
+                return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
+            if part in self.christian_names:
+                return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
 
-        # 🔵 OTHER SOUTH ASIAN CATEGORIES (Low confidence for 'Hindu' extract)
-        # Added truncated markers (SI, KA) common in SDAT data
-        sikh = ['singh', 'kaur', 'gill', 'bajwa', 'dhillon', 'sidhu', 'sandhu', 'brar', 'grewal', 'nijjar', 'thind', 'purewal', 'dhaliwal', 'si', 'ka']
-        muslim = ['khan', 'siddiqui', 'ahmed', 'malik', 'butt', 'rizvi', 'hashmi', 'qureshi', 'pasha', 'ansari', 'mirza', 'farooqui', 'zidi', 'ali', 'hussain', 'mohammad', 'mohammed', 'khalequz', 'rahman']
-        christian = ['varghese', 'mathew', 'kurian', 'chacko', 'cherian', 'dias', 'fernandes', 'pereira', 'dsouza', 'dmello', 'lobo', 'pinto']
-
-        if s in hindu:
-             return {'is_indian': True, 'is_hindu': True, 'category': 'Hindu'}
-        if s in sikh:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Sikh'}
-        if s in muslim:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
-        if s in christian:
-             return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
-             
-        return {'is_indian': False, 'is_hindu': False, 'category': 'Unknown'}
-
+        # 2. Check for Hindu markers (First or Last name)
+        for part in all_parts:
+            if part in self.hindu_first or part in self.hindu_last:
+                is_hindu = True
+                is_indian = True
+                category = 'Hindu'
+                break
+                
+        return {
+            'is_indian': is_indian, 
+            'is_hindu': is_hindu, 
+            'category': category
+        }
 
     def predict_race(self, full_name: str) -> Dict[str, any]:
         """
-        Predict race/ethnicity from full name.
-        SDAT format is typically: LAST FIRST MIDDLE
-        Returns: {predicted_race, confidence, method}
+        Predict race/ethnicity from full name using multi-token local dict & ethnicolr.
         """
         if not full_name or full_name == 'Not Found':
-            return {
-                'predicted_race': 'Unknown',
-                'confidence': 0,
-                'method': 'None'
-            }
+            return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
 
         cleaned_name = self._clean_name(full_name)
         if not cleaned_name:
-            return {
-                'predicted_race': 'Unknown',
-                'confidence': 0,
-                'method': 'None'
-            }
+            return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
 
-        # SDAT Format is usually LAST FIRST ... OR FIRST LAST depending on commas
-        # If there's a comma, the part BEFORE the comma is the surname
         if ',' in cleaned_name:
             surname = cleaned_name.split(',')[0].strip()
-            # Everything after the comma is potentially the first name
             firstname = cleaned_name.split(',')[1].strip().split()[0] if len(cleaned_name.split(',')) > 1 else ''
         else:
-            # No comma, assume LAST FIRST (SDAT standard) but check components
             parts = cleaned_name.split()
             if not parts:
                 return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
             surname = parts[0]
             firstname = parts[1] if len(parts) > 1 else ''
 
+        # BRUTAL ACCURACY: Check ALL parts of the name using new comprehensive dictionary
+        all_parts = cleaned_name.replace(',', ' ').split()
+        local_check = self._is_hindu_name(all_parts)
+        is_hindu = local_check['is_hindu']
+        
+        if getattr(self, 'is_business_entity', False):
+            is_hindu = False
+
         # Use ethnicolr if available
         if self.use_ethnicolr:
             try:
-                # We provide firstname and lastname for better wiki/census matching
                 result = self.pred_wiki_name(pd.DataFrame([[firstname, surname]]),
                                            columns=['firstname', 'lastname'])
 
@@ -1130,143 +1091,64 @@ class RaceEthnicityPredictor:
                     if race_cols:
                         probs = {col.replace('race_', ''): row[col] for col in race_cols}
                         predicted = max(probs, key=probs.get)
-                        # Specific handling for the 'Asian, IndianSubContinent' category in pred_wiki_name
                         if 'Asian,IndianSubContinent' in probs:
                             predicted = 'Asian,IndianSubContinent'
                         
                         confidence = round(probs[predicted] * 100, 1)
 
-                        if confidence > 35:
-                            # Map IndianSubContinent to Indian
-                            final_race = predicted
-                            if 'Indian' in predicted or 'Asian,IndianSubContinent' == predicted:
-                                final_race = 'Indian'
+                        final_race = predicted
+                        if 'Indian' in predicted or 'Asian,IndianSubContinent' == predicted:
+                            final_race = 'Indian'
 
-                            # Cross-verify with our high-precision Hindu dictionary
-                            # BRUTAL ACCURACY: Check ALL parts of the name for conflicting markers
-                            all_parts = cleaned_name.replace(',', ' ').split()
-                            conflicts = []
-                            for part in all_parts:
-                                check = self._is_indian_surname(part)
-                                if check['is_indian'] and not check['is_hindu']:
-                                    conflicts.append(check['category'])
-                            
-                            indian_check = self._is_indian_surname(surname)
-                            
-                            # If we find ANY Sikh, Muslim markers, or Business indicators, disqualify as Hindu
-                            is_hindu = indian_check.get('is_hindu', False)
-                            if conflicts or getattr(self, 'is_business_entity', False):
-                                is_hindu = False
+                        # Override ethnicolr if local dict strongly says it's Hindu
+                        if is_hindu:
+                            final_race = 'Indian'
+                            confidence = max(confidence, 95.0)
+                        
+                        # Disqualify if it's Sikh/Muslim/Christian
+                        if local_check['is_indian'] and not local_check['is_hindu']:
+                            final_race = 'Indian'
+                            confidence = max(confidence, 90.0)
 
+                        if confidence > 35 or is_hindu:
                             return {
-                                'predicted_race': 'Indian' if (indian_check['is_indian'] or final_race == 'Indian') else final_race,
+                                'predicted_race': final_race,
                                 'is_hindu': is_hindu,
-                                'sub_category': 'Mixed/Business' if (conflicts and is_hindu) else (conflicts[0] if conflicts else indian_check.get('category', 'General')),
-                                'confidence': max(confidence, 85.0 if indian_check['is_indian'] else 0),
-                                'method': f'ethnicolr + multi-token ({final_race}/{surname})'
+                                'sub_category': 'Business' if getattr(self, 'is_business_entity', False) else local_check['category'],
+                                'confidence': confidence,
+                                'method': f'ethnicolr+dict ({final_race})'
                             }
-
             except Exception as e:
                 pass
 
-        # Fallback to pattern matching
+        # Fallback if ethnicolr fails/unavailable OR if ethnicolr missed a high-confidence dict match
+        if is_hindu:
+            return {
+                'predicted_race': 'Indian',
+                'is_hindu': True,
+                'sub_category': 'Hindu',
+                'confidence': 90.0,
+                'method': 'Local Dictionary'
+            }
+        elif local_check['is_indian']:
+            return {
+                'predicted_race': 'Indian',
+                'is_hindu': False,
+                'sub_category': local_check['category'],
+                'confidence': 85.0,
+                'method': 'Local Dictionary'
+            }
+
         surname_lower = surname.lower()
-        
-        # BRUTAL ACCURACY: Check ALL parts of the name for conflicting markers in fallback too
-        all_parts = cleaned_name.replace(',', ' ').split()
-        conflicts = []
-        for part in all_parts:
-            check = self._is_indian_surname(part)
-            if check['is_indian'] and not check['is_hindu']:
-                conflicts.append(check['category'])
-
-        # Expanded list for better accuracy based on census data
-        expanded_patterns = {
-            'Asian': [
-                'nguyen', 'kim', 'li', 'wang', 'zhang', 'liu',
-                'chen', 'yang', 'tan', 'wong', 'lee', 'park', 'choi', 'yamamoto',
-                'sato', 'suzuki', 'tran', 'lin', 'wu', 'cho', 'vu', 'ngo', 'le', 'pham',
-                'chan', 'ho', 'lam', 'cheng', 'chu', 'lo', 'tam', 'yeung', 'chow', 'kwok', 'luk',
-                'jeong', 'yu', 'lim', 'choi', 'kang', 'shin', 'baek', 'song', 'han', 'yoon',
-                'hu', 'sun', 'zhu'
-            ],
-            'Indian': [
-                'patel', 'singh', 'kumar', 'gupta', 'shah', 'joshi', 'devi', 'das', 'reddy', 'rao',
-                'sharma', 'khan', 'lele', 'shanmugam', 'iyer', 'nair', 'menon', 'kulkarni', 'deshpande',
-                'chowdhury', 'mukherjee', 'chatterjee', 'banerjee', 'shetty', 'hegde', 'pai',
-                'malhotra', 'kapoor', 'khanna', 'mehta', 'shroff', 'maheshwari', 'agarwal',
-                'bollu', 'gambhir', 'siddiqui', 'ahmed', 'malik', 'butt', 'rizvi', 'hashmi', 'qureshi',
-                'pasha', 'ansari', 'mirza', 'farooqui', 'zidi', 'gill', 'bajwa', 'dhillon', 'sidhu',
-                'sandhu', 'brar', 'grewal', 'nijjar', 'thind', 'chhabra', 'anand', 'bakshi', 'bansal',
-                'bhatia', 'chopra', 'dhawan', 'gandhi', 'gill', 'goel', 'grover', 'handa', 'jain',
-                'johar', 'jolly', 'kapur', 'kaur', 'khurana', 'kohli', 'luthra', 'madan', 'mahajan',
-                'mangal', 'mehra', 'monga', 'oberoi', 'puri', 'sahni', 'sethi', 'sood', 'taneja',
-                'uppal', 'vohra', 'wadhwa', 'yadav', 'chawla', 'gadkari', 'gokhale', 'joshi',
-                'karve', 'modi', 'paranjpe', 'ranade', 'tilak', 'vaidya', 'nambiar', 'warrier',
-                'kurup', 'panicker', 'pillai', 'chacko', 'cherian', 'ittooop', 'kurian', 'mathew',
-                'varghese', 'acharya', 'adiga', 'bhat', 'hebbar', 'maiya', 'muralidhar', 'rao',
-                'shenoy', 'uudpa', 'vaikunta', 'balaram', 'chetty', 'mudaliar', 'naidu', 'reddy',
-                'sunderland', 'thakur', 'tyagi', 'verma', 'vats', 'shukla', 'mishra', 'pandey',
-                'tiwari', 'tripathi', 'dwivedi', 'chaubey'
-            ],
-            'Black': [
-                'washington', 'jefferson', 'booker', 'king', 'jackson', 'johnson',
-                'williams', 'thompson', 'harris', 'robinson', 'white', 'walker', 'scott',
-                'banks', 'reid', 'lowe', 'bryant', 'pierce', 'coleman', 'jenkins', 'perry',
-                'powell', 'long', 'patterson', 'hughes', 'floyd', 'mccoy', 'sims', 'mosley'
-            ],
-            'Hispanic': [
-                'garcia', 'rodriguez', 'martinez', 'hernandez', 'lopez', 'gonzalez',
-                'perez', 'sanchez', 'ramirez', 'torres', 'rivera', 'flores',
-                'diaz', 'morales', 'reyes', 'ruiz', 'cruz', 'ortiz', 'ramos', 'gomez', 'jimenez',
-                'castillo', 'vargas', 'mendoza', 'vasquez', 'morales', 'gutierrez', 'ortiz',
-                'nuñez', 'medina', 'cortes', 'vargas', 'castillo', 'santos', 'delgado'
-            ],
-            'White': [
-                'miller', 'anderson', 'taylor', 'moore', 'martin', 'clark', 'lewis', 
-                'walker', 'hall', 'allen', 'young', 'king', 'wright', 'baker', 'nelson',
-                'hill', 'scott', 'adams', 'baker', 'gonzalez', 'bailey', 'smith', 'brown',
-                'jones', 'wilson', 'thompson', 'clark', 'lewis', 'hall', 'allen', 'young',
-                'wright', 'king', 'baker', 'nelson', 'hill', 'carter', 'mitchell', 'perez'
-            ],
-        }
-
-        # Check for multi-part Asian surnames or specific prefixes
         if any(surname_lower.startswith(p) for p in ['huynh', 'phan', 'vuong', 'trinh']):
              return {'predicted_race': 'Asian', 'confidence': 85.0, 'method': 'Surname Pattern'}
 
-        for race, surnames in expanded_patterns.items():
+        for race, surnames in self.expanded_patterns.items():
             if surname_lower in [s.lower() for s in surnames]:
-                # Special handling for Indian to identify Hindu names
-                if race == 'Indian':
-                    indian_check = self._is_indian_surname(surname_lower)
-                    is_hindu = indian_check.get('is_hindu', False)
-                    # Disqualify if business or religious conflict found anywhere in string
-                    if conflicts or getattr(self, 'is_business_entity', False):
-                        is_hindu = False
-                        
-                    return {
-                        'predicted_race': 'Indian',
-                        'is_hindu': is_hindu,
-                        'sub_category': 'Mixed/Business' if (conflicts and is_hindu) else (conflicts[0] if conflicts else indian_check.get('category', 'General')),
-                        'confidence': 90.0,
-                        'method': 'Surname Pattern'
-                    }
-                
-                # Slight boost for common unique identifiers
                 conf = 90.0 if race == 'Asian' or race == 'Hispanic' else 60.0
-                return {
-                    'predicted_race': race,
-                    'is_hindu': False,
-                    'confidence': conf,
-                    'method': 'Surname Pattern'
-                }
+                return {'predicted_race': race, 'is_hindu': False, 'confidence': conf, 'method': 'Surname Pattern'}
 
-        return {
-            'predicted_race': 'White',
-            'confidence': 30.0,
-            'method': 'Default (Unknown)'
-        }
+        return {'predicted_race': 'White', 'confidence': 30.0, 'method': 'Default (Unknown)'}
 
 
 class PropertyPipeline:
