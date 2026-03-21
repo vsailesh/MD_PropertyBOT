@@ -7,6 +7,8 @@ requests>=2.31.0
 
 # Maps
 pydeck>=0.8.0
+folium>=0.14.0
+streamlit-folium>=0.15.0
 
 # Web Automation
 selenium>=4.15.0
