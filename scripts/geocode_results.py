@@ -134,7 +134,7 @@ def extract_surname(owner_name: str) -> str:
 def map_surname_to_origin(surname: str) -> dict:
     """Map surname to origin information (region, countries, confidence)"""
     if not surname:
-        return {'region': 'Unknown', 'countries': [], 'confidence': 'None', 'group': 'unknown'}
+        return {'region': 'Unknown', 'countries': '', 'confidence': 'None', 'group': 'unknown'}
 
     surname_upper = surname.upper().strip()
 
@@ -389,6 +389,12 @@ def geocode_hindu_owners(input_file='data/Hindu_Origin_Owners.xlsx',
         print(f"❌ Could not detect required columns!")
         return
 
+    # Capitalize latitude/longitude if they exist as lowercase
+    if 'latitude' in df.columns and 'Latitude' not in df.columns:
+        df.rename(columns={'latitude': 'Latitude'}, inplace=True)
+    if 'longitude' in df.columns and 'Longitude' not in df.columns:
+        df.rename(columns={'longitude': 'Longitude'}, inplace=True)
+
     # Add geocoding columns
     for col in ['Latitude', 'Longitude', 'Surname', 'Region', 'Countries',
                 'Origin_Confidence', 'Origin_Group', 'Geo_Address']:
@@ -396,7 +402,7 @@ def geocode_hindu_owners(input_file='data/Hindu_Origin_Owners.xlsx',
             df[col] = None
 
     # Load existing progress if any
-    if os.path.exists(output_file):
+    if os.path.exists(output_file) and input_file != output_file:
         print(f"🔄 Loading existing progress from {output_file}...")
         try:
             df_existing = pd.read_excel(output_file)
@@ -587,8 +593,8 @@ Examples:
 
     args = parser.parse_args()
 
-    # Allow up to 50 workers
-    num_workers = min(args.workers, 50)
+    # Allow up to 100 workers
+    num_workers = min(args.workers, 100)
     print(f"Using {num_workers} workers for parallel geocoding with {args.provider}\n")
 
     geocode_hindu_owners(args.input_file, args.output, workers=num_workers, 
