@@ -476,39 +476,37 @@ class PropertyDatabase:
         """
         added = 0
 
+        rows = []
+        for prop in properties:
+            checksum = self._calculate_checksum(prop)
+            rows.append((
+                self.normalize_text(prop.get('street_name', '')).upper(),
+                self.normalize_county(prop.get('county', '')),
+                self.normalize_text(prop.get('owner_name')),
+                self.normalize_text(prop.get('address')),
+                self.normalize_text(prop.get('city')),
+                prop.get('state', 'MD'),
+                self.normalize_text(prop.get('zip_code')),
+                self.normalize_text(prop.get('source_street', '')).upper(),
+                prop.get('predicted_race'),
+                prop.get('race_confidence'),
+                prop.get('race_method'),
+                prop.get('is_hindu', 0),
+                prop.get('sub_category'),
+                batch_id,
+                checksum
+            ))
+
         with self._transaction() as conn:
-            for prop in properties:
-                checksum = self._calculate_checksum(prop)
+            conn.executemany("""
+                INSERT OR REPLACE INTO properties
+                (street_name, county, owner_name, address, city, state, zip_code,
+                 source_street, predicted_race, race_confidence, race_method,
+                 is_hindu, sub_category, batch_id, checksum)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, rows)
 
-                try:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO properties
-                        (street_name, county, owner_name, address, city, state, zip_code,
-                         source_street, predicted_race, race_confidence, race_method,
-                         is_hindu, sub_category, batch_id, checksum)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        self.normalize_text(prop.get('street_name', '')).upper(),
-                        self.normalize_county(prop.get('county', '')),
-                        self.normalize_text(prop.get('owner_name')),
-                        self.normalize_text(prop.get('address')),
-                        self.normalize_text(prop.get('city')),
-                        prop.get('state', 'MD'),
-                        self.normalize_text(prop.get('zip_code')),
-                        self.normalize_text(prop.get('source_street', '')).upper(),
-                        prop.get('predicted_race'),
-                        prop.get('race_confidence'),
-                        prop.get('race_method'),
-                        prop.get('is_hindu', 0),
-                        prop.get('sub_category'),
-                        batch_id,
-                        checksum
-                    ))
-                    added += 1
-                except sqlite3.IntegrityError:
-                    # Duplicate record, skip
-                    pass
-
+        added = len(rows)
         return added
 
     def get_properties(self, county: Optional[str] = None,

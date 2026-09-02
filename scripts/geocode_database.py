@@ -8,6 +8,7 @@ import sqlite3
 import time
 import argparse
 import logging
+import re
 import sys
 import os
 import threading
@@ -16,6 +17,13 @@ from typing import List, Dict, Optional, Tuple
 
 from geopy.geocoders import ArcGIS, Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+
+from geocode_results import clean_address_for_geocoder
+
+try:
+    import pandas as pd
+except ImportError:
+    pd = None
 
 # Configure logging
 os.makedirs("logs", exist_ok=True)
@@ -33,10 +41,41 @@ logger = logging.getLogger(__name__)
 _thread_local = threading.local()
 
 class DatabaseGeocoder:
-    def __init__(self, db_path: str, provider: str = 'arcgis', workers: int = 4):
+    def __init__(self, db_path: str, provider: str = 'arcgis', workers: int = 4,
+                 cache_file: str = 'data/Hindu_Origin_Owners_Mapped.xlsx'):
         self.db_path = db_path
         self.provider_name = provider
         self.workers = workers
+        self._cache = self._load_cache(cache_file)
+
+    @staticmethod
+    def _load_cache(cache_file: str) -> dict:
+        """Load (address, county) -> lat/lon cache from a previously geocoded Excel file.
+        Cache hits skip the geocoding API entirely."""
+        if not cache_file or not os.path.exists(cache_file) or pd is None:
+            return {}
+        try:
+            df = pd.read_excel(cache_file)
+        except Exception as e:
+            logger.warning(f"Could not load geocode cache {cache_file}: {e}")
+            return {}
+
+        lat_col = next((c for c in df.columns if c.lower() in ('latitude', 'lat')), None)
+        lon_col = next((c for c in df.columns if c.lower() in ('longitude', 'lon', 'long')), None)
+        addr_col = next((c for c in df.columns if c.lower() in ('address', 'addr')), None)
+        county_col = next((c for c in df.columns if c.lower() == 'county'), None)
+        if not all([lat_col, lon_col, addr_col, county_col]):
+            logger.warning(f"Cache file {cache_file} missing lat/lon/address/county columns")
+            return {}
+
+        cache = {}
+        for _, row in df.iterrows():
+            if pd.notnull(row[lat_col]) and pd.notnull(row[lon_col]):
+                key = (str(row[addr_col]).upper().strip(),
+                       str(row[county_col]).upper().replace(" COUNTY", "").strip())
+                cache[key] = (float(row[lat_col]), float(row[lon_col]))
+        logger.info(f"🗂️  Loaded {len(cache):,} cached coordinates from {cache_file}")
+        return cache
         
     def _get_geocoder(self):
         """Get or create a thread-local geocoder to avoid SSL/Pickle issues."""
@@ -66,7 +105,7 @@ class DatabaseGeocoder:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        
+
         query = "SELECT id, address, city, state, zip_code, county FROM properties WHERE (latitude IS NULL OR longitude IS NULL) "
         if hindu_only:
             query += "AND is_hindu=1 "
@@ -78,30 +117,56 @@ class DatabaseGeocoder:
         return rows
 
     def geocode_worker(self, property_data: Dict) -> Dict:
-        """Geocode a single property."""
+        """Geocode a single property: cache first, then cleaned multi-level queries."""
         address = property_data['address']
         city = property_data['city'] or ""
-        zip_code = property_data['zip_code'] or ""
-        county = property_data['county'] or ""
-        
-        full_address = f"{address}, {city}, MD {zip_code}".strip(", ")
-        if county and county.lower() not in full_address.lower():
-            full_address += f", {county}"
-            
+        zip_code = str(property_data['zip_code'] or "").split('-')[0]
+        county = (property_data['county'] or "").replace(" County", "").replace(" COUNTY", "").strip()
+
+        # 1. Cache hit — no API call
+        cache_key = (str(address).upper().strip(), str(county).upper().strip())
+        if cache_key in self._cache:
+            lat, lon = self._cache[cache_key]
+            return {'id': property_data['id'], 'latitude': lat, 'longitude': lon,
+                    'method': 'Cache', 'success': True}
+
+        # 2. Build queries, most specific first (levels mirror geocode_results.py)
+        cleaned = clean_address_for_geocoder(address)
+        queries = []
+        if city and zip_code:
+            queries.append((f"{cleaned}, {city}, Maryland, {zip_code}, USA", "Level 0: Cleaned-City-Zip"))
+        if zip_code:
+            queries.append((f"{cleaned}, Maryland, {zip_code}, USA", "Level 1: Cleaned-Zip"))
+        if city:
+            queries.append((f"{cleaned}, {city}, Maryland, USA", "Level 2: Cleaned-City"))
+        queries.append((f"{address}, {county} County, Maryland, USA", "Level 3: Direct-County"))
+        queries.append((f"{cleaned}, {county} County, Maryland, USA", "Level 4: Cleaned-County"))
+        no_dir = re.sub(r'\b(NORTH|SOUTH|EAST|WEST|NORTHWEST|NORTHEAST|SOUTHWEST|SOUTHEAST)\b', '', cleaned).strip()
+        if no_dir != cleaned:
+            queries.append((f"{no_dir}, {county} County, Maryland, USA", "Level 5: Agnostic"))
+        parts = cleaned.split()
+        if len(parts) > 1 and parts[0][0].isdigit():
+            queries.append((f"{' '.join(parts[1:])}, {city or county}, Maryland, USA", "Level 6: StreetOnly"))
+        queries.append((f"{county} County, Maryland, USA", "Level 7: County Centroid"))
+
         try:
             geocoder = self._get_geocoder()
-            location = geocoder.geocode(full_address)
-            if location:
-                return {
-                    'id': property_data['id'],
-                    'latitude': location.latitude,
-                    'longitude': location.longitude,
-                    'success': True
-                }
-        except Exception as e:
-            # logger.debug(f"Failed to geocode {full_address}: {e}")
+            for q, method in queries:
+                try:
+                    location = geocoder.geocode(q)
+                    if location and ("Maryland" in location.address or ", MD" in location.address or location.address.endswith(" MD")):
+                        return {
+                            'id': property_data['id'],
+                            'latitude': location.latitude,
+                            'longitude': location.longitude,
+                            'method': method,
+                            'success': True
+                        }
+                except Exception:
+                    continue
+        except Exception:
             pass
-            
+
         return {'id': property_data['id'], 'success': False}
 
     def update_database(self, results: List[Dict]):
@@ -112,10 +177,10 @@ class DatabaseGeocoder:
         updates = []
         for res in results:
             if res['success']:
-                updates.append((res['latitude'], res['longitude'], res['id']))
-                
+                updates.append((res['latitude'], res['longitude'], res.get('method', ''), res['id']))
+
         if updates:
-            cur.executemany("UPDATE properties SET latitude=?, longitude=? WHERE id=?", updates)
+            cur.executemany("UPDATE properties SET latitude=?, longitude=?, geo_method=? WHERE id=?", updates)
             conn.commit()
             
         conn.close()
@@ -185,10 +250,13 @@ def main():
     parser.add_argument('--workers', type=int, default=4, help='Number of parallel threads')
     parser.add_argument('--limit', type=int, help='Max properties to process in this run')
     parser.add_argument('--provider', default='arcgis', choices=['arcgis', 'nominatim'], help='Geocode provider')
-    
+    parser.add_argument('--cache', default='data/Hindu_Origin_Owners_Mapped.xlsx',
+                        help='Previously geocoded Excel used as coordinate cache (skip API for known addresses)')
+
     args = parser.parse_args()
-    
-    geocoder = DatabaseGeocoder(args.db, provider=args.provider, workers=args.workers)
+
+    geocoder = DatabaseGeocoder(args.db, provider=args.provider, workers=args.workers,
+                                cache_file=args.cache)
     geocoder.run(max_rows=args.limit)
 
 if __name__ == "__main__":

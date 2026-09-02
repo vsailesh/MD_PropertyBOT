@@ -28,3 +28,9 @@ debug_*.html
 data/*.db
 data/*.db.backup_*
 data/*.xlsx.backup_*
+*.db-shm
+*.db-wal
+
+# SQL dumps / upload state (full data exports, never commit)
+*.sql
+data/.upload_progress*.json

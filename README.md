@@ -48,11 +48,19 @@ python scripts/robust_bulk_search.py run
 # Export all properties
 python scripts/robust_bulk_search.py export -o data/Results.xlsx
 
-# Export only Hindu owners
-python scripts/robust_bulk_search.py export --hindu-only -o data/Hindu_Owners.xlsx
+# Export geocoded Hindu owners (dashboard format, single source of truth = DB)
+python scripts/export_mapped.py -o data/Hindu_Origin_Owners_Mapped.xlsx
 ```
 
-### 4. Monitor Progress
+### 4. Geocode (single DB-side pass)
+```bash
+# ArcGIS default; uses data/Hindu_Origin_Owners_Mapped.xlsx as coordinate cache
+python scripts/geocode_database.py --workers 8
+
+# Hindu owners are prioritized automatically, then remaining properties
+```
+
+### 5. Monitor Progress
 ```bash
 # Show statistics
 python scripts/robust_bulk_search.py stats
@@ -64,10 +72,17 @@ python scripts/robust_bulk_search.py list
 python scripts/robust_bulk_search.py check
 ```
 
-### 5. View Dashboard
+### 6. View Dashboard
 ```bash
 streamlit run dashboard/app.py
 ```
+
+### 7. Upload to Turso (remote DB)
+```bash
+export TURSO_TOKEN=<your token>   # never hardcode; revoked tokens stay revoked
+python data/async_upload_to_turso.py
+```
+Resumable — progress saved to `data/.upload_progress_async.json`.
 
 ## Key Features
 
@@ -78,7 +93,7 @@ streamlit run dashboard/app.py
 | **Auto Backups** | Periodic snapshots every 100 streets |
 | **Race Prediction** | ethnicolr ML-based ethnicity detection |
 | **Hindu Identification** | Specialized Hindu owner extraction |
-| **Geocoding** | Nominatim (OpenStreetMap) coordinates |
+| **Geocoding** | Single DB-side pass (ArcGIS/Nominatim) with Excel coordinate cache — no double geocoding |
 
 ## Data Sources
 
