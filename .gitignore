@@ -34,3 +34,4 @@ data/*.xlsx.backup_*
 # SQL dumps / upload state (full data exports, never commit)
 *.sql
 data/.upload_progress*.json
+data/.bulk_download_progress.json

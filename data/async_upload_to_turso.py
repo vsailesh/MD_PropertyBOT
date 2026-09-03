@@ -13,9 +13,24 @@ import aiohttp
 import base64
 
 TURSO_URL = "https://property-search-vsailesh.aws-us-east-1.turso.io"
-TURSO_TOKEN = os.environ["TURSO_TOKEN"]  # export TURSO_TOKEN=... before running
+
+def _load_token():
+    """Token from env, else from .env at repo root (TURSO_TOKEN=...)."""
+    token = os.environ.get("TURSO_TOKEN")
+    if token:
+        return token
+    env_path = os.path.join(DATA_DIR, "..", ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("TURSO_TOKEN="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return None
 
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+TURSO_TOKEN = _load_token()
+
 LOCAL_DB = os.path.join(DATA_DIR, "property_search.db")
 BATCH_SIZE = 1000  # rows per request (1000 rows x 20 cols = 20k params, under SQLite's 32k limit)
 CONCURRENCY = 5    # concurrent requests

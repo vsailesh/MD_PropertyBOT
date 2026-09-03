@@ -701,7 +701,7 @@ class SDATAutoScraper:
                 print(f"  🌐 Trying search: {street_query} in {county} (Requests)")
                 
                 # Step 0: GET base page to get initial ViewState
-                resp = self.session.get(self.base_url, timeout=15)
+                resp = self.session.get(self.base_url, timeout=30)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 form_vars = self._get_form_vars(soup)
                 
@@ -714,7 +714,7 @@ class SDATAutoScraper:
                     'ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$StartNavigationTemplateContainerID$btnContinue': 'Continue'
                 }
                 
-                resp = self.session.post(self.base_url, data=payload, timeout=15)
+                resp = self.session.post(self.base_url, data=payload, timeout=30)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 form_vars = self._get_form_vars(soup)
                 
