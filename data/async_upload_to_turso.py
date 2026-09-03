@@ -12,24 +12,28 @@ import asyncio
 import aiohttp
 import base64
 
-TURSO_URL = "https://property-search-vsailesh.aws-us-east-1.turso.io"
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def _load_token():
-    """Token from env, else from .env at repo root (TURSO_TOKEN=...)."""
-    token = os.environ.get("TURSO_TOKEN")
-    if token:
-        return token
+def _load_env():
+    """Token + URL from env, else from .env at repo root (TURSO_TOKEN=..., TURSO_URL=...)."""
+    env = {"TURSO_TOKEN": os.environ.get("TURSO_TOKEN"),
+           "TURSO_URL": os.environ.get("TURSO_URL")}
     env_path = os.path.join(DATA_DIR, "..", ".env")
     if os.path.exists(env_path):
         with open(env_path) as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("TURSO_TOKEN="):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
+                if line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if key in env and not env[key]:
+                    env[key] = value.strip().strip('"').strip("'")
+    return env
 
-DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-TURSO_TOKEN = _load_token()
+_ENV = _load_env()
+TURSO_TOKEN = _ENV["TURSO_TOKEN"]
+TURSO_URL = _ENV["TURSO_URL"] or "https://property-search-vsailesh.aws-us-east-1.turso.io"
 
 LOCAL_DB = os.path.join(DATA_DIR, "property_search.db")
 BATCH_SIZE = 1000  # rows per request (1000 rows x 20 cols = 20k params, under SQLite's 32k limit)
