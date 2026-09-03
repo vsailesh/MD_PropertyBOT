@@ -303,15 +303,278 @@ def backfill(batch_size: int = 10_000):
           f"{cities:,} rows have city")
 
 
+def address_suffix(address: str) -> str:
+    """Trailing street-type token of our address ('11604 BEDFORD CT' -> 'CT')."""
+    if not address:
+        return ""
+    tokens = str(address).upper().replace(",", " ").split()
+    return tokens[-1] if tokens and tokens[-1] in _cleaner.SUFFIXES else ""
+
+
+def relaxed_backfill(batch_size: int = 10_000):
+    """Second pass for rows still missing coords (first pass = unique-key only).
+
+    Tier 1 (precise): parcels matching (county, street, hnum) AND street-type
+    equal to our address suffix — disambiguates 'BEDFORD CT' vs 'BEDFORD RD'.
+    Tier 2 (centroid): keys whose parcels agree within ~0.004 deg (~400m,
+    same street segment) take the centroid.
+    """
+    conn = sqlite3.connect(MAIN_DB)
+    conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
+    cur = conn.cursor()
+
+    need = cur.execute("SELECT COUNT(*) FROM main.properties WHERE latitude IS NULL").fetchone()[0]
+    print(f"📊 rows still missing coords: {need:,}")
+
+    # Tier 1 needs a parcels lookup index (also speeds km2 build)
+    print("🔨 indexing bulk parcels ...")
+    conn.execute("CREATE INDEX IF NOT EXISTS bulk.idx_parcel_key ON parcels(county, street, hnum)")
+    conn.commit()
+
+    # Tier 2 lookup table (tiny spread keys, any type mix)
+    print("🔨 building near-agreement keymap ...")
+    cur.execute("DROP TABLE IF EXISTS temp.km2")
+    cur.execute("""
+        CREATE TABLE temp.km2 AS
+        SELECT county, street, hnum, AVG(lat) AS lat, AVG(lon) AS lon
+        FROM bulk.parcels
+        WHERE lat IS NOT NULL AND street != '' AND hnum IS NOT NULL
+        GROUP BY county, street, hnum
+        HAVING MAX(lat) - MIN(lat) < 0.004 AND MAX(lon) - MIN(lon) < 0.004
+    """)
+    cur.execute("CREATE INDEX temp.idx_km2 ON km2(county, street, hnum)")
+    print(f"   {cur.execute('SELECT COUNT(*) FROM temp.km2').fetchone()[0]:,} near-agreement keys")
+
+    key_cache = {}
+    for county, street in cur.execute(
+        "SELECT DISTINCT county, street_name FROM main.properties WHERE latitude IS NULL"
+    ):
+        key_cache[(county, street)] = (clean_county(county), clean_street(street) if street else "")
+
+    print("🔗 matching (tier 1: type-exact, tier 2: centroid) ...")
+    stream = conn.cursor()
+    lookup = conn.cursor()
+    stream.execute("""
+        SELECT id, county, street_name, address
+        FROM main.properties
+        WHERE latitude IS NULL
+    """)
+    updates = []
+    t1 = t2 = written = 0
+    while True:
+        batch = stream.fetchmany(batch_size)
+        if not batch:
+            break
+        for pid, county, street, address in batch:
+            k_county, k_street = key_cache.get((county, street), ("", ""))
+            k_hnum = parse_hnum(address)
+            if not (k_county and k_street and k_hnum):
+                continue
+            # Tier 1: exact parcel row w/ matching street type
+            row = None
+            suffix = address_suffix(address)
+            if suffix:
+                cands = lookup.execute(
+                    """SELECT lat, lon FROM bulk.parcels
+                       WHERE county=? AND street=? AND hnum=? AND upper(stype)=?
+                         AND lat IS NOT NULL""",
+                    (k_county, k_street, k_hnum, suffix),
+                ).fetchall()
+                if len(cands) == 1:
+                    row = cands[0]
+                    t1 += 1
+                elif len(cands) > 1:
+                    lats = [c[0] for c in cands]
+                    lons = [c[1] for c in cands]
+                    if max(lats) - min(lats) < 0.001 and max(lons) - min(lons) < 0.001:
+                        row = (sum(lats) / len(lats), sum(lons) / len(lons))
+                        t1 += 1
+            # Tier 2: centroid of near-agreement key
+            if row is None:
+                row = lookup.execute(
+                    "SELECT lat, lon FROM temp.km2 WHERE county=? AND street=? AND hnum=?",
+                    (k_county, k_street, k_hnum),
+                ).fetchone()
+                if row:
+                    t2 += 1
+            if row:
+                updates.append((row[0], row[1], pid))
+
+        if updates:
+            with conn:
+                conn.executemany(
+                    """UPDATE main.properties SET latitude=?, longitude=?, geo_method='MDP Parcel'
+                       WHERE id=? AND latitude IS NULL""",
+                    updates,
+                )
+            written += len(updates)
+            updates = []
+            print(f"\r  ✍️  tier1 {t1:,} | tier2 {t2:,} | written {written:,}", end="", flush=True)
+
+    print()
+    still = cur.execute("SELECT COUNT(*) FROM main.properties WHERE latitude IS NULL").fetchone()[0]
+    filled = cur.execute(
+        "SELECT COUNT(*) FROM main.properties WHERE geo_method='MDP Parcel'"
+    ).fetchone()[0]
+    conn.close()
+    print(f"✅ relaxed pass done: tier1 {t1:,}, tier2 {t2:,}; {filled:,} total via MDP Parcel, "
+          f"{still:,} still missing coords")
+
+
+def address_backfill(batch_size: int = 10_000):
+    """Third pass for rows still missing coords.
+
+    Key insight: properties.street_name sometimes diverges from the actual
+    address ('CLARKS' vs '7802 CLARKSWORTH PL') — derive the street key from
+    the address string itself. Rows with no house number at all get a street
+    centroid (avg of that street's parcels), geo_method='Street Centroid'.
+    """
+    conn = sqlite3.connect(MAIN_DB)
+    conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
+    cur = conn.cursor()
+
+    need = cur.execute("SELECT COUNT(*) FROM main.properties WHERE latitude IS NULL").fetchone()[0]
+    print(f"📊 rows still missing coords: {need:,}")
+
+    print("🔨 rebuilding keymaps (unique + near-agreement + street centroids) ...")
+    conn.execute("CREATE INDEX IF NOT EXISTS bulk.idx_parcel_key ON parcels(county, street, hnum)")
+    conn.execute("CREATE INDEX IF NOT EXISTS bulk.idx_parcel_street ON parcels(county, street)")
+    cur.execute("DROP TABLE IF EXISTS temp.km")
+    cur.execute("""
+        CREATE TABLE temp.km AS
+        SELECT county, street, hnum, MIN(lat) AS lat, MIN(lon) AS lon,
+               MIN(city) AS city, MIN(zip) AS zip
+        FROM bulk.parcels
+        WHERE lat IS NOT NULL AND street != '' AND hnum IS NOT NULL
+        GROUP BY county, street, hnum
+        HAVING MIN(lat) = MAX(lat) AND MIN(lon) = MAX(lon)
+    """)
+    cur.execute("CREATE INDEX temp.idx_km ON km(county, street, hnum)")
+    cur.execute("DROP TABLE IF EXISTS temp.km2")
+    cur.execute("""
+        CREATE TABLE temp.km2 AS
+        SELECT county, street, hnum, AVG(lat) AS lat, AVG(lon) AS lon
+        FROM bulk.parcels
+        WHERE lat IS NOT NULL AND street != '' AND hnum IS NOT NULL
+        GROUP BY county, street, hnum
+        HAVING MAX(lat) - MIN(lat) < 0.004 AND MAX(lon) - MIN(lon) < 0.004
+    """)
+    cur.execute("CREATE INDEX temp.idx_km2 ON km2(county, street, hnum)")
+    cur.execute("DROP TABLE IF EXISTS temp.kc")
+    cur.execute("""
+        CREATE TABLE temp.kc AS
+        SELECT county, street, AVG(lat) AS lat, AVG(lon) AS lon, COUNT(*) AS n
+        FROM bulk.parcels
+        WHERE lat IS NOT NULL AND street != ''
+        GROUP BY county, street
+        HAVING n >= 3 AND MAX(lat) - MIN(lat) < 0.02 AND MAX(lon) - MIN(lon) < 0.02
+    """)
+    cur.execute("CREATE INDEX temp.idx_kc ON kc(county, street)")
+    conn.commit()
+    print("   keymaps ready")
+
+    # distinct (county, address) pairs — clean address ONCE per pair
+    addr_cache = {}
+    for county, address in cur.execute(
+        "SELECT DISTINCT county, address FROM main.properties "
+        "WHERE latitude IS NULL OR city IS NULL OR city = ''"
+    ):
+        addr_cache[(county, address)] = (
+            clean_county(county),
+            clean_street(address) if address else "",
+            parse_hnum(address),
+        )
+
+    print("🔗 matching (address-derived keys; street centroids as fallback) ...")
+    stream = conn.cursor()
+    lookup = conn.cursor()
+    stream.execute("""
+        SELECT id, county, address
+        FROM main.properties
+        WHERE latitude IS NULL OR city IS NULL OR city = ''
+    """)
+    updates, centroid_updates, city_updates = [], [], []
+    exact = centroid = city_filled = 0
+    while True:
+        batch = stream.fetchmany(batch_size)
+        if not batch:
+            break
+        for pid, county, address in batch:
+            k_county, k_street, k_hnum = addr_cache.get((county, address), ("", "", None))
+            if not (k_county and k_street):
+                continue
+            row = None
+            if k_hnum:
+                row = lookup.execute(
+                    "SELECT lat, lon, city, zip FROM temp.km WHERE county=? AND street=? AND hnum=?",
+                    (k_county, k_street, k_hnum),
+                ).fetchone()
+                if row is None:
+                    row = lookup.execute(
+                        "SELECT lat, lon, NULL AS city, NULL AS zip FROM temp.km2 "
+                        "WHERE county=? AND street=? AND hnum=?",
+                        (k_county, k_street, k_hnum),
+                    ).fetchone()
+            if row is not None:
+                exact += 1
+                if row[2] or row[3]:
+                    city_updates.append((row[2] or "", row[3] or "", pid))
+                updates.append((row[0], row[1], pid))
+            else:
+                c = lookup.execute(
+                    "SELECT lat, lon FROM temp.kc WHERE county=? AND street=?",
+                    (k_county, k_street),
+                ).fetchone()
+                if c:
+                    centroid += 1
+                    centroid_updates.append((c[0], c[1], pid))
+
+        if updates or centroid_updates or city_updates:
+            with conn:
+                if updates:
+                    conn.executemany(
+                        """UPDATE main.properties SET latitude=?, longitude=?, geo_method='MDP Parcel'
+                           WHERE id=? AND latitude IS NULL""",
+                        updates,
+                    )
+                if centroid_updates:
+                    conn.executemany(
+                        """UPDATE main.properties SET latitude=?, longitude=?, geo_method='Street Centroid'
+                           WHERE id=? AND latitude IS NULL""",
+                        centroid_updates,
+                    )
+                if city_updates:
+                    conn.executemany(
+                        """UPDATE main.properties SET city=COALESCE(NULLIF(?,''), city),
+                                                      zip_code=COALESCE(NULLIF(?,''), zip_code)
+                           WHERE id=? AND (city IS NULL OR city='')""",
+                        city_updates,
+                    )
+            city_filled += len(city_updates)
+            print(f"\r  ✍️  exact {exact:,} | centroid {centroid:,} | city {city_filled:,}",
+                  end="", flush=True)
+            updates, centroid_updates, city_updates = [], [], []
+
+    print()
+    still = cur.execute("SELECT COUNT(*) FROM main.properties WHERE latitude IS NULL").fetchone()[0]
+    conn.close()
+    print(f"✅ address pass done: exact {exact:,}, street-centroid {centroid:,}; "
+          f"{still:,} still missing coords")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--download", action="store_true", help="fetch bulk data (resumable)")
     ap.add_argument("--backfill", action="store_true", help="join + update main DB")
+    ap.add_argument("--relaxed", action="store_true",
+                    help="second pass: type-exact + centroid matches for remaining rows")
+    ap.add_argument("--from-address", action="store_true",
+                    help="third pass: address-derived street keys + street centroids")
     ap.add_argument("--max-pages", type=int, default=None, help="download: stop after N pages")
     ap.add_argument("--dry-run", action="store_true", help="download: fetch pages, don't store")
     args = ap.parse_args()
 
-    if not (args.download or args.backfill):
+    if not (args.download or args.backfill or args.relaxed or args.from_address):
         args.download = args.backfill = True
 
     if args.download:
@@ -321,6 +584,14 @@ def main():
         if not os.path.exists(BULK_DB):
             sys.exit("No bulk db — run with --download first")
         backfill()
+    if args.relaxed:
+        if not os.path.exists(BULK_DB):
+            sys.exit("No bulk db — run with --download first")
+        relaxed_backfill()
+    if args.from_address:
+        if not os.path.exists(BULK_DB):
+            sys.exit("No bulk db — run with --download first")
+        address_backfill()
 
 
 if __name__ == "__main__":

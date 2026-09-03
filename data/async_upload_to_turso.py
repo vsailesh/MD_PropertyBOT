@@ -37,6 +37,7 @@ CONCURRENCY = 5    # concurrent requests
 PIPELINE_URL = f"{TURSO_URL}/v2/pipeline"
 PROGRESS_FILE = os.path.join(DATA_DIR, ".upload_progress_async.json")
 MAX_REQUEUE = 2    # times a failed batch is re-queued before giving up
+REPLACE = False    # --replace: INSERT OR REPLACE, refreshing already-uploaded rows
 
 HEADERS = {
     "Authorization": f"Bearer {TURSO_TOKEN}",
@@ -96,7 +97,8 @@ def build_batch_statement(table_name, columns, rows):
     col_list = ", ".join([f'"{c}"' for c in columns])
     row_placeholder = "(" + ", ".join(["?"] * n_cols) + ")"
     values = ", ".join([row_placeholder] * len(rows))
-    sql = f'INSERT OR IGNORE INTO "{table_name}" ({col_list}) VALUES {values}'
+    verb = "REPLACE" if REPLACE else "IGNORE"
+    sql = f'INSERT OR {verb} INTO "{table_name}" ({col_list}) VALUES {values}'
     args = [convert_value(val) for row in rows for val in row]
     return {"sql": sql, "args": args}
 
@@ -189,9 +191,13 @@ async def upload_table_async(table_name, columns, local_conn, progress):
     print(f"\n  📊 Result: {state['uploaded']:,}/{total:,} rows uploaded, {state['failures']} failed batches")
 
 def main():
-    if "TURSO_TOKEN" not in os.environ:
-        sys.exit("Error: TURSO_TOKEN not set. Run: export TURSO_TOKEN=<your token>")
-    print("🚀 Turso Database Upload (Async HTTP)")
+    global REPLACE
+    if "--replace" in sys.argv:
+        REPLACE = True
+        sys.argv.remove("--replace")
+    if not TURSO_TOKEN:
+        sys.exit("Error: TURSO_TOKEN not set (env or .env). Mint one: turso db tokens create <db-name>")
+    print("🚀 Turso Database Upload (Async HTTP)" + (" [REPLACE mode — refreshes remote rows]" if REPLACE else ""))
     progress = load_progress()
     conn = sqlite3.connect(LOCAL_DB)
     
