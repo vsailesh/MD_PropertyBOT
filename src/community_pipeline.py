@@ -795,51 +795,65 @@ class SDATAutoScraper:
                 
                 # Handle Pagination
                 page_num = 1
-                while True:
+                seen_args = set()      # pager arguments already requested
+                seen_rows = set()      # (owner, address) already collected
+                for row in results:
+                    seen_rows.add((row.get('owner_name'), row.get('address')))
+                while page_num < 200:  # hard cap vs. infinite pager loops
                     form_vars = self._get_form_vars(soup)
-                    # Find pager links
-                    pager = soup.find("tr", class_="PagerStyle")
+                    # Find pager links — 2026 site uses class 'Pager'
+                    # (older markup used 'PagerStyle'; keep both)
+                    pager = (soup.find("tr", class_="Pager")
+                             or soup.find("tr", class_="PagerStyle"))
                     if not pager: break
-                    
+
                     next_page = page_num + 1
                     target_link = None
-                    
+
                     # Try to find the numeric link for the next page
                     links = pager.find_all("a")
                     for link in links:
                         if link.text.strip() == str(next_page):
                             target_link = link
                             break
-                    
+
                     # Fallback to "..." or "Next"
                     if not target_link:
                         for link in links:
                             if link.text.strip() in ("...", "Next", ">"):
                                 target_link = link
                                 break
-                    
+
                     if not target_link: break
-                    
+
                     # Extract __EVENTTARGET and __EVENTARGUMENT from href if it's a postback
                     # href="javascript:__doPostBack('ctl00$cphMainContentArea$ucSearchType$wzrdRealPropertySearch$ucSearchResult$gv_SearchResult','Page$2')"
                     href = target_link.get('href', '')
                     match = re.search(r"__doPostBack\('([^']+)','([^']+)'\)", href)
                     if not match: break
-                    
+
                     target, argument = match.groups()
+                    if argument in seen_args: break   # pager circling — stop
+                    seen_args.add(argument)
                     payload = {
                         **form_vars,
                         '__EVENTTARGET': target,
                         '__EVENTARGUMENT': argument
                     }
-                    
+
+                    time.sleep(0.5)  # gentle pace on deep pagination
                     resp = self.session.post(self.base_url, data=payload, timeout=20)
                     self._check_blocked(resp)
                     soup = BeautifulSoup(resp.text, 'html.parser')
 
                     page_results = self._parse_grid_results(soup, county)
                     if not page_results: break
-                    results.extend(page_results)
+                    fresh = [r for r in page_results
+                             if (r.get('owner_name'), r.get('address')) not in seen_rows]
+                    if not fresh: break                # only duplicates left — done
+                    for r in fresh:
+                        seen_rows.add((r.get('owner_name'), r.get('address')))
+                    results.extend(fresh)
                     page_num += 1
                     
                 if results:

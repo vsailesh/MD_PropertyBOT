@@ -114,13 +114,15 @@ class RobustBulkSearch:
         formatted = SDATFormatter.format_address(str(addr))
         return formatted['street_name'].upper()
 
-    def create_job_from_excel(self, excel_path: str, job_name: Optional[str] = None) -> int:
+    def create_job_from_excel(self, excel_path: str, job_name: Optional[str] = None,
+                              force: bool = False) -> int:
         """
         Create a search job from an Excel file.
 
         Args:
             excel_path: Path to Excel file with streets
             job_name: Optional name for the job
+            force: Re-scrape even if street/county already completed
 
         Returns:
             Batch ID
@@ -210,7 +212,7 @@ class RobustBulkSearch:
                 rejected_path = f"data/rejected_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
                 self.no_result_filter.export_rejected_streets(rejected, rejected_path)
 
-        batch_id = self.job_manager.create_search_job(streets, job_name)
+        batch_id = self.job_manager.create_search_job(streets, job_name, force=force)
         print(f"📋 Created job: {job_name} (Batch ID: {batch_id})")
 
         return batch_id
@@ -370,13 +372,22 @@ class RobustBulkSearch:
         print(f"⚙️  Workers: {max_workers}")
         print(f"{'='*70}\n")
 
-        # Probe gate: one cheap request — abort before burning any streets
-        # if Cloudflare is blocking this IP (streets marked completed during a
-        # block record 0 properties as false negatives)
+        # Probe gate: abort before burning any streets if Cloudflare is
+        # blocking this IP (streets marked completed during a block record 0
+        # properties as false negatives). The WAF is intermittent, so probe a
+        # few times with spacing before declaring a real block.
+        import time as _time
         probe = SDATAutoScraper(headless=True)
-        if probe.is_blocked():
-            print("🛑 SDAT is blocking this IP (HTTP 403 / Cloudflare challenge).")
-            print("🛑 Aborting before processing — retry after 24-48h cooldown.")
+        blocked_streak = 0
+        for _ in range(3):
+            if probe.is_blocked():
+                blocked_streak += 1
+                _time.sleep(30)
+            else:
+                break
+        if blocked_streak == 3:
+            print("🛑 SDAT is blocking this IP (HTTP 403 / Cloudflare challenge, 3/3 probes).")
+            print("🛑 Aborting before processing — retry after cooldown.")
             return
 
         # Reset any stuck in-progress items from previous crashes
@@ -563,6 +574,8 @@ Pipeline Order:
                            help='Backup every N streets (default: 1000)')
     run_parser.add_argument('--no-filter', action='store_true',
                            help='Disable the No Result predictor filter')
+    run_parser.add_argument('--force', action='store_true',
+                           help='Re-scrape street/county pairs even if already completed (gap backfill)')
     run_parser.add_argument('--filter-threshold', type=float, default=0.6,
                            help='Filter threshold for ML predictor (0-1, default: 0.6)')
     run_parser.add_argument('--train-filter', action='store_true',
@@ -613,7 +626,8 @@ Pipeline Order:
         if args.resume:
             batch_id = searcher.resume_job(batch_id=args.resume)
         elif args.input:
-            batch_id = searcher.create_job_from_excel(args.input, args.name)
+            batch_id = searcher.create_job_from_excel(args.input, args.name,
+                                                      force=getattr(args, 'force', False))
         else:
             # Try to resume the latest incomplete batch
             batches = searcher.db.get_all_batches()

@@ -849,13 +849,15 @@ class SearchJobManager:
         return streets
 
     def create_search_job(self, streets: List[Tuple[str, str]],
-                         job_name: str) -> int:
+                         job_name: str, force: bool = False) -> int:
         """
         Create a new search job (batch).
 
         Args:
             streets: List of (street_name, county) tuples
             job_name: Name for this job
+            force: Skip the already-completed filter (re-scrape gaps where a
+                previous run truncated results, e.g. pre-pagination-fix)
 
         Returns:
             Batch ID
@@ -868,7 +870,7 @@ class SearchJobManager:
         # Filter out already-searched streets efficiently using search_progress
         with self.db._transaction() as conn:
             # Get existing completions with county for accurate cross-county coverage
-            completed_df = pd.read_sql_query("SELECT street_name, county FROM search_progress WHERE status = 'completed'", conn)
+            completed_df = pd.read_sql_query("SELECT street_name, county FROM search_progress WHERE status = 'completed'", conn) if not force else pd.DataFrame()
             
         if not completed_df.empty:
             # Use (street, county) tuple as key to allow same street name in different counties
@@ -889,22 +891,24 @@ class SearchJobManager:
                 
                 if (s, c) not in existing_keys:
                     new_streets.append(item)
-                
+
             print(f"Filtered out {len(streets) - len(new_streets)} already-completed street/county pairs")
-            
-            # Additional de-duplication within the incoming batch itself
-            unique_streets = []
-            seen = set()
-            for s, c in new_streets:
-                sk = str(s).upper().strip()
-                ck = self.db.normalize_county(str(c)).upper()
-                key = (sk, ck)
-                if key not in seen:
-                    seen.add(key)
-                    unique_streets.append((s, c))
-                    
-            print(f"Filtered out {len(new_streets) - len(unique_streets)} duplicates within the input file itself")
-            streets = unique_streets
+            streets = new_streets
+
+        # Additional de-duplication within the incoming batch itself (always,
+        # even with force=True)
+        unique_streets = []
+        seen = set()
+        for s, c in streets:
+            sk = str(s).upper().strip()
+            ck = self.db.normalize_county(str(c)).upper()
+            key = (sk, ck)
+            if key not in seen:
+                seen.add(key)
+                unique_streets.append((s, c))
+
+        print(f"Filtered out {len(streets) - len(unique_streets)} duplicates within the input file itself")
+        streets = unique_streets
 
         self.db.add_streets_to_batch(streets, batch_id)
 
