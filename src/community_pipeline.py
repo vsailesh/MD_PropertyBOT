@@ -31,6 +31,15 @@ from src.diagnostics import ScrapeDiagnostics
 load_dotenv()
 
 
+class SDATBlockedError(Exception):
+    """Raised when SDAT returns a Cloudflare block (HTTP 403 / challenge page).
+
+    Critical: without this, a block parses as 'No records found' and streets
+    get marked completed with 0 properties — silent false negatives.
+    """
+    pass
+
+
 class UsageTracker:
     """Track API usage to stay within free tier limits."""
     def __init__(self, filename="usage_stats.json"):
@@ -659,6 +668,28 @@ class SDATAutoScraper:
                 vars[id] = el.get('value', '')
         return vars
 
+    def _check_blocked(self, resp):
+        """Raise SDATBlockedError if the response is a Cloudflare block page."""
+        if resp.status_code == 403:
+            raise SDATBlockedError(
+                f"SDAT returned HTTP 403 — Cloudflare block (IP ban?). "
+                f"Stop scraping and retry after cooldown."
+            )
+        head = resp.text[:2000]
+        if "Attention Required" in head or "cf-browser-verification" in head:
+            raise SDATBlockedError(
+                "SDAT returned a Cloudflare challenge page — blocked. "
+                "Stop scraping and retry after cooldown."
+            )
+
+    def is_blocked(self) -> bool:
+        """Cheap single-request probe: is SDAT currently blocking this IP?"""
+        try:
+            r = self.session.get(self.base_url, timeout=15)
+            return r.status_code == 403 or "Attention Required" in r.text[:2000]
+        except requests.RequestException:
+            return False  # network error is not a block — let normal retries handle it
+
     def search_street_bulk(self, street_name: str, county: str) -> list[dict]:
         """
         Search for a street name using requests-based ASP.NET form flow.
@@ -682,12 +713,21 @@ class SDATAutoScraper:
         
         variations = [v for v in dict.fromkeys(variations) if v and v != 'UNKNOWN']
         
-        county_upper = county.upper().replace(" COUNTY", "").strip()
+        county_upper = county.upper().strip()
+        is_city = county_upper.endswith(" CITY")
+        for suffix in (" COUNTY", " CITY"):
+            if county_upper.endswith(suffix):
+                county_upper = county_upper[: -len(suffix)].strip()
+                break
         county_id = self.county_map.get(county_upper)
         if not county_id:
-            # Fallback for approximate matches
+            # Suffix-aware disambiguation: 'BALTIMORE' alone is ambiguous
+            # (CITY vs COUNTY) — keep the original suffix preference
+            county_id = self.county_map.get(county_upper + (" CITY" if is_city else " COUNTY"))
+        if not county_id:
+            # Last resort: prefix match, but never cross the CITY/COUNTY line
             for k, v in self.county_map.items():
-                if county_upper in k:
+                if k.startswith(county_upper) and not (is_city ^ k.endswith(" CITY")):
                     county_id = v
                     break
         
@@ -699,9 +739,14 @@ class SDATAutoScraper:
         for street_query in variations:
             try:
                 print(f"  🌐 Trying search: {street_query} in {county} (Requests)")
-                
+
+                # Politeness throttle — keep request rate human-like so we
+                # don't trip Cloudflare rate-based blocking again
+                time.sleep(1.5 + (len(street_query) % 7) * 0.25)
+
                 # Step 0: GET base page to get initial ViewState
                 resp = self.session.get(self.base_url, timeout=30)
+                self._check_blocked(resp)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 form_vars = self._get_form_vars(soup)
                 
@@ -715,6 +760,7 @@ class SDATAutoScraper:
                 }
                 
                 resp = self.session.post(self.base_url, data=payload, timeout=30)
+                self._check_blocked(resp)
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 form_vars = self._get_form_vars(soup)
                 
@@ -726,8 +772,9 @@ class SDATAutoScraper:
                 }
                 
                 resp = self.session.post(self.base_url, data=payload, timeout=20)
+                self._check_blocked(resp)
                 soup = BeautifulSoup(resp.text, 'html.parser')
-                
+
                 # Step 3: Parse Results
                 if "No records found" in resp.text:
                     continue
@@ -787,8 +834,9 @@ class SDATAutoScraper:
                     }
                     
                     resp = self.session.post(self.base_url, data=payload, timeout=20)
+                    self._check_blocked(resp)
                     soup = BeautifulSoup(resp.text, 'html.parser')
-                    
+
                     page_results = self._parse_grid_results(soup, county)
                     if not page_results: break
                     results.extend(page_results)

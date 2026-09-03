@@ -24,7 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 
-from src.community_pipeline import SDATAutoScraper, RaceEthnicityPredictor, SDATFormatter
+from src.community_pipeline import SDATAutoScraper, RaceEthnicityPredictor, SDATFormatter, SDATBlockedError
 from src.robust_database import PropertyDatabase, SearchJobManager
 from src.street_name_cleaner import StreetNameCleaner, export_duplicates_report
 
@@ -324,6 +324,15 @@ class RobustBulkSearch:
                         backup_path = self.db.backup_database()
                         print(f"📦 Backup created: {backup_path}")
 
+                except SDATBlockedError as e:
+                    # IP is blocked — hammering makes the ban worse. Abort the
+                    # whole run; the street stays 'in_progress' and next run's
+                    # reset_in_progress_streets() returns it to pending.
+                    print(f"\n    🛑 {e}")
+                    print(f"    🛑 Aborting run — retry after Cloudflare cooldown (24-48h).")
+                    self._shutdown_requested = True
+                    break
+
                 except Exception as e:
                     print(f"    ❌ Failed on thread {worker_id}: {e}")
                     self.db.mark_street_completed(
@@ -360,6 +369,15 @@ class RobustBulkSearch:
         print(f"📊 Batch ID: {batch_id}")
         print(f"⚙️  Workers: {max_workers}")
         print(f"{'='*70}\n")
+
+        # Probe gate: one cheap request — abort before burning any streets
+        # if Cloudflare is blocking this IP (streets marked completed during a
+        # block record 0 properties as false negatives)
+        probe = SDATAutoScraper(headless=True)
+        if probe.is_blocked():
+            print("🛑 SDAT is blocking this IP (HTTP 403 / Cloudflare challenge).")
+            print("🛑 Aborting before processing — retry after 24-48h cooldown.")
+            return
 
         # Reset any stuck in-progress items from previous crashes
         self.db.reset_in_progress_streets(batch_id)
