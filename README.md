@@ -82,7 +82,25 @@ streamlit run dashboard/app.py
 export TURSO_TOKEN=<your token>   # never hardcode; revoked tokens stay revoked
 python data/async_upload_to_turso.py
 ```
-Resumable — progress saved to `data/.upload_progress_async.json`.
+Resumable — progress saved to `data/.upload_progress_async.json`. Token/URL also read from `.env` (gitignored). Note: the uploader runs on ANY argv — there is no `--help`.
+
+### 8. Full Pipeline (one command)
+```bash
+python scripts/pipeline.py                # audit → scrape gaps → backfill → export → sync
+python scripts/pipeline.py --statewide    # also queue never-searched streets first
+python scripts/pipeline.py --skip-scrape  # no SDAT traffic (blocked hours)
+python scripts/pipeline.py --skip-upload  # another upload running
+```
+Scrape step drains through Cloudflare blocks via the watchdog (10-min backoff loop).
+
+## Keeping Data Fresh
+
+- **Weekly rotation** (launchd `com.marylandproperty.refresh`, Sun 02:07): re-scrapes the 2,000 stalest streets with **replace semantics** — a street's old rows are deleted before the new ones land, so owner changes and vanished parcels actually update. Full state cycles every ~3 months.
+- **Refresh a batch manually**: `python scripts/robust_bulk_search.py run -i FILE --force --replace`
+- **Statewide completeness**: `python scripts/statewide_streets.py --create-job` — queues MDP-bulk streets never searched (batches drain oldest-first).
+- **Coverage audit**: `python scripts/coverage_audit.py --gaps data/coverage_gaps.xlsx` — address-level coverage vs MDP bulk ground truth; the gap file feeds straight back into a refresh scrape.
+- **Watchdog**: `./scripts/sdat_watchdog.sh [-i FILE --force --replace]` — single-instance (lock-guarded); retries every 10 min until the pending queue drains.
+- **Bulk data refresh** (coords/city/zip): `python scripts/bulk_backfill.py --download` — Socrata re-download, resumable.
 
 ## Key Features
 
@@ -109,6 +127,9 @@ Resumable — progress saved to `data/.upload_progress_async.json`.
 python scripts/robust_bulk_search.py run [OPTIONS]
   -i, --input FILE         Excel file with streets
   --resume ID              Resume specific batch
+  --force                  Re-scrape streets even if already completed
+  --replace                Refresh semantics: delete a street's old rows before
+                           saving new ones (pair with --force)
   --save-interval N        Save every N streets (default: 10)
   --backup-interval N      Backup every N streets (default: 100)
 
