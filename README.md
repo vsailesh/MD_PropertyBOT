@@ -86,10 +86,10 @@ Resumable — progress saved to `data/.upload_progress_async.json`. Token/URL al
 
 ### 8. Full Pipeline (one command)
 ```bash
-python scripts/pipeline.py                # audit → scrape gaps → backfill → export → sync
+python scripts/pipeline.py                # audit → scrape gaps → backfill → export
 python scripts/pipeline.py --statewide    # also queue never-searched streets first
 python scripts/pipeline.py --skip-scrape  # no SDAT traffic (blocked hours)
-python scripts/pipeline.py --skip-upload  # another upload running
+python scripts/pipeline.py --upload       # also sync to Turso (off by default — rate-limited)
 ```
 Scrape step drains through Cloudflare blocks via the watchdog (10-min backoff loop).
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-One-command pipeline: audit coverage → scrape gaps → backfill → export → sync.
+One-command pipeline: audit coverage → scrape gaps → backfill → export.
 
 Replaces the 4-5 manual steps that had to run in exactly the right order:
 
@@ -10,7 +10,8 @@ Replaces the 4-5 manual steps that had to run in exactly the right order:
                         stale rows are replaced not duplicated)
   3. bulk_backfill    — coordinates/city/zip from the MDP bulk dataset
   4. export_mapped    — dashboard Excel
-  5. Turso upload     — incremental remote sync
+  5. Turso upload     — OPT-IN (--upload): Turso rate-limited us, local DB
+                        is the source of truth for now
 
 Each step only runs if it has work to do; any step failing stops the run
 with a clear report of where it stopped.
@@ -19,6 +20,7 @@ Usage:
   ./venv/bin/python scripts/pipeline.py                  # full run
   ./venv/bin/python scripts/pipeline.py --skip-scrape    # no SDAT (blocked hours)
   ./venv/bin/python scripts/pipeline.py --statewide      # also queue never-searched
+  ./venv/bin/python scripts/pipeline.py --upload         # include Turso sync
 """
 import argparse
 import os
@@ -53,8 +55,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-scrape", action="store_true",
                     help="skip SDAT scraping (audit+backfill+export+sync only)")
-    ap.add_argument("--skip-upload", action="store_true",
-                    help="skip Turso sync (e.g. another upload is running)")
+    ap.add_argument("--upload", action="store_true",
+                    help="also sync to Turso (OFF by default — Turso rate-limited "
+                         "us; local DB is the source of truth for now)")
     ap.add_argument("--statewide", action="store_true",
                     help="also queue never-searched statewide streets "
                          "(MDP bulk diff) before scraping")
@@ -104,11 +107,12 @@ def main():
     # 4. Dashboard export
     run_step("export mapped", [PY, "scripts/export_mapped.py"])
 
-    # 5. Remote sync
-    if not args.skip_upload:
+    # 5. Remote sync — opt-in: Turso rate-limited us, local DB is the
+    # source of truth for now
+    if args.upload:
         run_step("Turso sync", [PY, "data/async_upload_to_turso.py"])
     else:
-        print("\n⏭ Turso sync skipped (--skip-upload)")
+        print("\n⏭ Turso sync skipped (local-only; pass --upload to sync)")
 
     print("\n✅ pipeline complete")
 
