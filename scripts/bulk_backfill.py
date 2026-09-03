@@ -202,7 +202,7 @@ def download(max_pages: int | None = None, dry_run: bool = False):
 # ---------------------------------------------------------------- backfill
 
 def backfill(batch_size: int = 10_000):
-    conn = sqlite3.connect(MAIN_DB)
+    conn = sqlite3.connect(MAIN_DB, timeout=120.0)
     conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
     cur = conn.cursor()
 
@@ -271,7 +271,11 @@ def backfill(batch_size: int = 10_000):
             city_updates.append((bcity, bzip, pid))
 
         if coord_updates:
-            with conn:
+            # BEGIN IMMEDIATE, not the implicit deferred txn: with the live
+            # scraper committing constantly, a deferred read→write upgrade
+            # hits SQLITE_BUSY_SNAPSHOT, which busy_timeout never retries
+            conn.execute("BEGIN IMMEDIATE")
+            try:
                 conn.executemany(
                     """UPDATE main.properties SET latitude=?, longitude=?, geo_method='MDP Parcel'
                        WHERE id=? AND latitude IS NULL""",
@@ -283,6 +287,10 @@ def backfill(batch_size: int = 10_000):
                        WHERE id=? AND (city IS NULL OR city='')""",
                     city_updates,
                 )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             written += len(coord_updates)
             coord_updates, city_updates = [], []
             print(f"\r  ✍️  matched {matched:,} | written {written:,}", end="", flush=True)
@@ -319,7 +327,7 @@ def relaxed_backfill(batch_size: int = 10_000):
     Tier 2 (centroid): keys whose parcels agree within ~0.004 deg (~400m,
     same street segment) take the centroid.
     """
-    conn = sqlite3.connect(MAIN_DB)
+    conn = sqlite3.connect(MAIN_DB, timeout=120.0)
     conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
     cur = conn.cursor()
 
@@ -401,12 +409,18 @@ def relaxed_backfill(batch_size: int = 10_000):
                 updates.append((row[0], row[1], pid))
 
         if updates:
-            with conn:
+            # BEGIN IMMEDIATE — see strict-pass note on SQLITE_BUSY_SNAPSHOT
+            conn.execute("BEGIN IMMEDIATE")
+            try:
                 conn.executemany(
                     """UPDATE main.properties SET latitude=?, longitude=?, geo_method='MDP Parcel'
                        WHERE id=? AND latitude IS NULL""",
                     updates,
                 )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             written += len(updates)
             updates = []
             print(f"\r  ✍️  tier1 {t1:,} | tier2 {t2:,} | written {written:,}", end="", flush=True)
@@ -429,7 +443,7 @@ def address_backfill(batch_size: int = 10_000):
     the address string itself. Rows with no house number at all get a street
     centroid (avg of that street's parcels), geo_method='Street Centroid'.
     """
-    conn = sqlite3.connect(MAIN_DB)
+    conn = sqlite3.connect(MAIN_DB, timeout=120.0)
     conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
     cur = conn.cursor()
 
@@ -530,7 +544,11 @@ def address_backfill(batch_size: int = 10_000):
                     centroid_updates.append((c[0], c[1], pid))
 
         if updates or centroid_updates or city_updates:
-            with conn:
+            # BEGIN IMMEDIATE: a deferred read→write upgrade under the live
+            # scraper's constant commits hits SQLITE_BUSY_SNAPSHOT (not
+            # retried by busy_timeout); taking the write lock up front is
+            conn.execute("BEGIN IMMEDIATE")
+            try:
                 if updates:
                     conn.executemany(
                         """UPDATE main.properties SET latitude=?, longitude=?, geo_method='MDP Parcel'
@@ -550,6 +568,10 @@ def address_backfill(batch_size: int = 10_000):
                            WHERE id=? AND (city IS NULL OR city='')""",
                         city_updates,
                     )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
             city_filled += len(city_updates)
             print(f"\r  ✍️  exact {exact:,} | centroid {centroid:,} | city {city_filled:,}",
                   end="", flush=True)

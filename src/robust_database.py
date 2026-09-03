@@ -279,20 +279,24 @@ class PropertyDatabase:
 
     # ============ STREET SEARCH MANAGEMENT ============
 
-    def add_streets_to_batch(self, streets: List[Tuple[str, str]], batch_id: int):
+    def add_streets_to_batch(self, streets: List[Tuple[str, str]], batch_id: int,
+                             requeue_completed: bool = False):
         """
         Add streets to a batch for processing.
 
         Args:
             streets: List of (street_name, county) tuples
             batch_id: Batch ID to associate with
+            requeue_completed: also re-queue streets whose current status is
+                'completed' (refresh re-scrape). Default keeps completed rows
+                untouched.
         """
         with self._transaction() as conn:
             # Insert pending search tasks, reassigning them to the new batch if not completed
             for street_name, county in streets:
                 norm_street = self.normalize_text(street_name).upper()
                 norm_county = self.normalize_county(county)
-                conn.execute("""
+                upsert = """
                     INSERT INTO search_progress (street_name, county, batch_id)
                     VALUES (?, ?, ?)
                     ON CONFLICT(street_name, county) DO UPDATE SET
@@ -302,8 +306,11 @@ class PropertyDatabase:
                         completed_at = NULL,
                         error_message = NULL,
                         properties_found = 0
-                    WHERE search_progress.status != 'completed'
-                """, (norm_street, norm_county, batch_id))
+                """
+                if not requeue_completed:
+                    # Never clobber a completed search (plain queue append)
+                    upsert += " WHERE search_progress.status != 'completed'"
+                conn.execute(upsert, (norm_street, norm_county, batch_id))
             
             # Update correct batch total
             true_total = conn.execute("SELECT COUNT(*) FROM search_progress WHERE batch_id = ?", (batch_id,)).fetchone()[0]
@@ -463,13 +470,17 @@ class PropertyDatabase:
         key_fields = f"{record.get('county', '')}{record.get('owner_name', '')}{record.get('address', '')}"
         return hashlib.md5(key_fields.encode()).hexdigest()
 
-    def add_properties(self, properties: List[Dict], batch_id: int) -> int:
+    def add_properties(self, properties: List[Dict], batch_id: int,
+                       replace: bool = False) -> int:
         """
         Add property records to the database.
 
         Args:
             properties: List of property dictionaries
             batch_id: Associated batch ID
+            replace: delete prior rows for each (county, source_street) before
+                inserting — refresh semantics, so stale owner names disappear
+                instead of lingering next to the new rows
 
         Returns:
             Number of properties added
@@ -498,6 +509,18 @@ class PropertyDatabase:
             ))
 
         with self._transaction() as conn:
+            if replace:
+                # One DELETE per distinct searched street in this save.
+                # county matched suffix-agnostically — legacy rows store
+                # 'MONTGOMERY COUNTY', current rows 'Montgomery'
+                conn.executemany("""
+                    DELETE FROM properties
+                    WHERE source_street = ?
+                      AND upper(replace(county, ' COUNTY', '')) = ?
+                """, sorted({
+                    (row[7], row[1].upper().replace(' COUNTY', ''))
+                    for row in rows
+                }))
             conn.executemany("""
                 INSERT OR REPLACE INTO properties
                 (street_name, county, owner_name, address, city, state, zip_code,
@@ -508,6 +531,28 @@ class PropertyDatabase:
 
         added = len(rows)
         return added
+
+    def delete_street_results(self, street_name: str, county: str) -> int:
+        """
+        Delete all property rows that came from one (street, county) search.
+
+        Used by refresh mode when a re-scrape returns zero results — the old
+        rows are stale (owners moved, parcels merged) and must not survive.
+
+        Returns:
+            Number of rows deleted
+        """
+        with self._transaction() as conn:
+            # county matched suffix-agnostically — legacy rows store
+            # 'MONTGOMERY COUNTY', current rows 'Montgomery'
+            cur = conn.execute(
+                """DELETE FROM properties
+                   WHERE source_street = ?
+                     AND upper(replace(county, ' COUNTY', '')) = ?""",
+                (self.normalize_text(street_name).upper(),
+                 self.normalize_county(county).upper().replace(' COUNTY', '')),
+            )
+            return cur.rowcount
 
     def get_properties(self, county: Optional[str] = None,
                       is_hindu: Optional[bool] = None,
@@ -910,7 +955,7 @@ class SearchJobManager:
         print(f"Filtered out {len(streets) - len(unique_streets)} duplicates within the input file itself")
         streets = unique_streets
 
-        self.db.add_streets_to_batch(streets, batch_id)
+        self.db.add_streets_to_batch(streets, batch_id, requeue_completed=force)
 
         # Ensure correct batch totals are initialized
         self.db.update_batch_progress(batch_id, streets_completed=0)

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.marylandproperty.refresh</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Volumes/HulkBuster/Documents/Agents/maryland-property-agent/scripts/weekly_refresh.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Volumes/HulkBuster/Documents/Agents/maryland-property-agent</string>
+
+    <!-- Every Sunday 02:07 local -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>2</integer>
+        <key>Minute</key>
+        <integer>7</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Volumes/HulkBuster/Documents/Agents/maryland-property-agent/logs/launchd_refresh.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/HulkBuster/Documents/Agents/maryland-property-agent/logs/launchd_refresh.log</string>
+</dict>
+</plist>

@@ -43,7 +43,8 @@ class RobustBulkSearch:
 
     def __init__(self, db_path: str = "data/property_search.db", use_filter: bool = True,
                  filter_threshold: float = 0.6, filter_model_path: str = None,
-                 clean_streets: bool = True, remove_duplicates: bool = True):
+                 clean_streets: bool = True, remove_duplicates: bool = True,
+                 replace_mode: bool = False):
         """
         Initialize the robust bulk searcher.
 
@@ -54,11 +55,14 @@ class RobustBulkSearch:
             filter_model_path: Path to trained filter model
             clean_streets: Whether to clean street names per SDAT rules
             remove_duplicates: Whether to remove duplicate streets
+            replace_mode: refresh semantics — a re-scraped street's old rows
+                are deleted before the new ones land (pair with --force)
         """
         self.db = PropertyDatabase(db_path)
         self.job_manager = SearchJobManager(self.db)
         self.predictor = RaceEthnicityPredictor()
         self._shutdown_requested = False
+        self.replace_mode = replace_mode
 
         # Initialize Street Name Cleaner (SDAT-compliant)
         self.clean_streets = clean_streets
@@ -293,8 +297,16 @@ class RobustBulkSearch:
                 try:
                     properties = self.process_street(street_name, county, batch_id, scraper)
 
+                    if self.replace_mode and not properties:
+                        # Zero results now means the old rows are stale —
+                        # refresh must clear them, not leave them behind
+                        deleted = self.db.delete_street_results(street_name, county)
+                        if deleted:
+                            print(f"    ♻️  replace: cleared {deleted} stale rows (0 results now)")
+
                     if properties:
-                        added = self.db.add_properties(properties, batch_id)
+                        added = self.db.add_properties(properties, batch_id,
+                                                       replace=self.replace_mode)
                         with shared_state['lock']:
                             shared_state['total_properties'] += added
 
@@ -576,6 +588,9 @@ Pipeline Order:
                            help='Disable the No Result predictor filter')
     run_parser.add_argument('--force', action='store_true',
                            help='Re-scrape street/county pairs even if already completed (gap backfill)')
+    run_parser.add_argument('--replace', action='store_true',
+                           help='Refresh semantics: delete a street\'s old rows before saving new ones '
+                                '(pair with --force; catches owner changes and vanished parcels)')
     run_parser.add_argument('--filter-threshold', type=float, default=0.6,
                            help='Filter threshold for ML predictor (0-1, default: 0.6)')
     run_parser.add_argument('--train-filter', action='store_true',
@@ -610,7 +625,8 @@ Pipeline Order:
         use_filter=not getattr(args, 'no_filter', False),
         filter_threshold=getattr(args, 'filter_threshold', 0.6),
         clean_streets=not getattr(args, 'no_clean', False),
-        remove_duplicates=not getattr(args, 'no_dedup', False)
+        remove_duplicates=not getattr(args, 'no_dedup', False),
+        replace_mode=getattr(args, 'replace', False)
     )
 
     # Handle train-filter command
@@ -629,12 +645,14 @@ Pipeline Order:
             batch_id = searcher.create_job_from_excel(args.input, args.name,
                                                       force=getattr(args, 'force', False))
         else:
-            # Try to resume the latest incomplete batch
+            # Resume the OLDEST in_progress batch — FIFO, so a batch queued
+            # behind a draining one (e.g. statewide after a gap backfill)
+            # doesn't jump the queue
             batches = searcher.db.get_all_batches()
             incomplete = [b for b in batches if b['status'] == 'in_progress']
 
             if incomplete:
-                batch_id = searcher.resume_job(batch_id=incomplete[0]['id'])
+                batch_id = searcher.resume_job(batch_id=incomplete[-1]['id'])
             else:
                 print("No incomplete batch found. Use --input to create a new job.")
                 return
