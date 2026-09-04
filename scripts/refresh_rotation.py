@@ -40,6 +40,7 @@ def main():
         """SELECT street_name AS Street, county AS County
            FROM search_progress
            WHERE status = 'completed' AND completed_at IS NOT NULL
+             AND properties_found > 0
            ORDER BY completed_at ASC
            LIMIT ?""",
         conn, params=(args.limit,),
