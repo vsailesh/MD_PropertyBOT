@@ -84,6 +84,20 @@ def commented_keys():
 def _norm(text):
     return " ".join(str(text or "").upper().split())
 
+
+def _editor_password():
+    """EDITOR_PASSWORD from st.secrets (cloud) or env/.env (local) —
+    empty means commenting stays locked (fail closed)."""
+    try:
+        if "EDITOR_PASSWORD" in st.secrets:
+            return st.secrets["EDITOR_PASSWORD"]
+    except Exception:
+        pass
+    from comments_store import _load_env_file
+    env = dict(os.environ)
+    env.update(_load_env_file())
+    return env.get("EDITOR_PASSWORD", "")
+
 @st.cache_data
 def load_data(file):
     df = pd.read_excel(file)
@@ -202,7 +216,7 @@ try:
                 "Your name", value=st.session_state.get("editor_name", ""))
             pw = st.text_input("Editor password", type="password")
             if st.button("Unlock commenting"):
-                expected = st.secrets.get("EDITOR_PASSWORD", "") if hasattr(st, "secrets") else ""
+                expected = _editor_password()
                 if pw and expected and pw == expected:
                     st.session_state.editor_ok = True
                     st.rerun()

@@ -46,14 +46,16 @@ def _config():
         import streamlit as st
         if "supabase" in st.secrets:
             sec = st.secrets["supabase"]
-            return sec["url"].rstrip("/"), sec["anon_key"]
+            key = sec.get("anon_key") or sec.get("publishable_key")
+            return sec["url"].rstrip("/"), key
     except Exception:
         pass
 
     env = dict(os.environ)
     env.update(_load_env_file())
     url = env.get("SUPABASE_URL", "").rstrip("/")
-    key = env.get("SUPABASE_ANON_KEY", "")
+    # Supabase renamed the anon key to "publishable key" (2025) — accept both
+    key = env.get("SUPABASE_ANON_KEY") or env.get("SUPABASE_PUBLISHABLE_KEY") or ""
     return (url, key) if url and key else (None, None)
 
 
