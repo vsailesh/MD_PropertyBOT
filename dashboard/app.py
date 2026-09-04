@@ -85,18 +85,37 @@ def _norm(text):
     return " ".join(str(text or "").upper().split())
 
 
-def _editor_password():
-    """EDITOR_PASSWORD from st.secrets (cloud) or env/.env (local) —
-    empty means commenting stays locked (fail closed)."""
+def _editor_emails():
+    """Allowlist from st.secrets (list) or env/.env (comma-separated)."""
     try:
-        if "EDITOR_PASSWORD" in st.secrets:
-            return st.secrets["EDITOR_PASSWORD"]
+        vals = list(st.secrets.get("EDITOR_EMAILS", []))
+    except Exception:
+        vals = []
+    if not vals:
+        from comments_store import _load_env_file
+        env = dict(os.environ)
+        env.update(_load_env_file())
+        raw = env.get("EDITOR_EMAILS", "")
+        vals = [v.strip() for v in raw.split(",") if v.strip()]
+    return {v.lower() for v in vals}
+
+
+def _current_user():
+    """Logged-in Google identity or None. st.user is always present in
+    recent Streamlit; it's just empty when unauthenticated."""
+    try:
+        u = st.user
+        email = (getattr(u, "email", None) or (u.get("email") if hasattr(u, "get") else None) or "")
+        if email:
+            name = getattr(u, "name", None) or email
+            return {"email": str(email).lower(), "name": str(name)}
     except Exception:
         pass
-    from comments_store import _load_env_file
-    env = dict(os.environ)
-    env.update(_load_env_file())
-    return env.get("EDITOR_PASSWORD", "")
+    return None
+
+
+def _is_editor(user):
+    return bool(user and user["email"] in _editor_emails())
 
 @st.cache_data
 def load_data(file):
@@ -207,23 +226,25 @@ try:
             
         filtered_df = df[mask]
 
-        # 4. Editor access gate — everyone reads outreach notes; only people
-        # with the editor password can add them (secret lives server-side in
-        # st.secrets; missing secret fails closed)
+        # 4. Editor access — Google sign-in + email allowlist. Everyone reads
+        # outreach notes; only allowlisted accounts can add them.
         st.sidebar.markdown("---")
-        with st.sidebar.expander("✍️ Editor access", expanded=not st.session_state.get("editor_ok", False)):
-            st.session_state.editor_name = st.text_input(
-                "Your name", value=st.session_state.get("editor_name", ""))
-            pw = st.text_input("Editor password", type="password")
-            if st.button("Unlock commenting"):
-                expected = _editor_password()
-                if pw and expected and pw == expected:
-                    st.session_state.editor_ok = True
-                    st.rerun()
-                else:
-                    st.error("Wrong password (or no EDITOR_PASSWORD configured).")
-        if st.session_state.get("editor_ok"):
-            st.sidebar.success(f"Commenting as **{st.session_state.get('editor_name') or 'anonymous'}**")
+        user = _current_user()
+        if user and _is_editor(user):
+            st.sidebar.success(f"✍️ Commenting as **{user['name']}** ({user['email']})")
+            if st.sidebar.button("Sign out"):
+                st.logout()
+        elif user:
+            st.sidebar.warning(f"Signed in as {user['email']} — not on the editor allowlist.")
+            if st.sidebar.button("Sign out"):
+                st.logout()
+        else:
+            with st.sidebar.expander("✍️ Editor sign-in", expanded=True):
+                st.caption("Editors sign in with Google. Readers don't need to sign in.")
+                try:
+                    st.login("google")
+                except Exception as e:
+                    st.info(f"Google sign-in not configured: {e}")
 
         # 5. Download Button
         st.sidebar.markdown("---")
@@ -455,7 +476,7 @@ try:
                 else:
                     st.caption("No outreach recorded for this address yet.")
 
-                if st.session_state.get("editor_ok"):
+                if user and _is_editor(user):
                     with st.form("add_note", clear_on_submit=True):
                         c1, c2 = st.columns(2)
                         outreach_type = c1.selectbox("Type", OUTREACH_TYPES)
@@ -469,7 +490,7 @@ try:
                             try:
                                 store.add_comment(
                                     county=sel_county, address=sel_address,
-                                    author=st.session_state.get("editor_name", ""),
+                                    author=user["name"],
                                     comment=comment, outreach_type=outreach_type,
                                     outreach_date=outreach_date,
                                 )
@@ -479,7 +500,7 @@ try:
                             except Exception as e:
                                 st.error(f"Save failed: {e}")
                 else:
-                    st.info("Read-only view. Unlock editor access in the sidebar to add notes.")
+                    st.info("Read-only view. Editors sign in with Google (sidebar) to add notes.")
 
         # Refresh Button
         if st.button("🔄 Refresh Data"):
