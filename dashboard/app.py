@@ -2,8 +2,15 @@ import streamlit as st
 import pandas as pd
 import folium
 import re
+import json
+import sys
 from streamlit_folium import st_folium
 import os
+
+# Streamlit puts cwd (not the script dir) on sys.path — make the sibling
+# comments_store module importable both locally and on Streamlit Cloud
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from comments_store import CommentsStore, OUTREACH_TYPES
 
 st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_icon="🏠")
 
@@ -58,6 +65,24 @@ if not os.path.exists(DATA_FILE):
     # Fallback to base file if mapped doesn't exist yet
     DATA_FILE = 'data/Hindu_Origin_Owners.xlsx'
     st.warning("📍 Geocoding is in progress. Showing raw data (map will be empty until coordinates are added).")
+
+
+# ------------------------------------------------------------ outreach log
+@st.cache_data(ttl=300, show_spinner=False)
+def commented_keys():
+    """(COUNTY, ADDRESS) pairs that already have outreach notes — cached so
+    marker badging costs one request per 5 minutes, not one per render."""
+    store = CommentsStore()
+    if not store.enabled:
+        return set()
+    try:
+        return store.all_commented()
+    except Exception:
+        return set()
+
+
+def _norm(text):
+    return " ".join(str(text or "").upper().split())
 
 @st.cache_data
 def load_data(file):
@@ -168,7 +193,25 @@ try:
             
         filtered_df = df[mask]
 
-        # 4. Download Button
+        # 4. Editor access gate — everyone reads outreach notes; only people
+        # with the editor password can add them (secret lives server-side in
+        # st.secrets; missing secret fails closed)
+        st.sidebar.markdown("---")
+        with st.sidebar.expander("✍️ Editor access", expanded=not st.session_state.get("editor_ok", False)):
+            st.session_state.editor_name = st.text_input(
+                "Your name", value=st.session_state.get("editor_name", ""))
+            pw = st.text_input("Editor password", type="password")
+            if st.button("Unlock commenting"):
+                expected = st.secrets.get("EDITOR_PASSWORD", "") if hasattr(st, "secrets") else ""
+                if pw and expected and pw == expected:
+                    st.session_state.editor_ok = True
+                    st.rerun()
+                else:
+                    st.error("Wrong password (or no EDITOR_PASSWORD configured).")
+        if st.session_state.get("editor_ok"):
+            st.sidebar.success(f"Commenting as **{st.session_state.get('editor_name') or 'anonymous'}**")
+
+        # 5. Download Button
         st.sidebar.markdown("---")
         csv = filtered_df.to_csv(index=False).encode('utf-8')
         st.sidebar.download_button(
@@ -237,30 +280,42 @@ try:
         display_map_df = map_df
 
         # Create Folium Map
+        _commented = commented_keys()
+
         def create_map(map_data_list, center_lat, center_lon, zoom):
             m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
             if map_data_list:
                 from folium.plugins import FastMarkerCluster
+                # Keys of properties that already have outreach notes —
+                # marker gets a 💬 badge + green color so people see prior
+                # outreach at a glance
+                commented_js = json.dumps(
+                    sorted(c + "|" + a for c, a in _commented))
                 callback = """
                 function (row) {
+                    var COMMENTED = new Set(%s);
+                    var key = String(row[4]).toUpperCase().replace(/\\s+/g, ' ')
+                        + "|" + String(row[3]).toUpperCase().replace(/\\s+/g, ' ');
+                    var hasNote = COMMENTED.has(key);
                     var marker = L.circleMarker(new L.LatLng(row[0], row[1]), {
-                        color: '#ff4b4b',
-                        fillColor: '#ff4b4b',
+                        color: hasNote ? '#2ecc71' : '#ff4b4b',
+                        fillColor: hasNote ? '#2ecc71' : '#ff4b4b',
                         fillOpacity: 0.7,
                         radius: 5,
                         weight: 1
                     });
-                    var popupContent = "<b>Owner:</b> " + row[2] + "<br><b>Address:</b> " + row[3];
+                    var popupContent = (hasNote ? "💬 outreach on record<br>" : "")
+                        + "<b>Owner:</b> " + row[2] + "<br><b>Address:</b> " + row[3];
                     marker.bindPopup(popupContent, {maxWidth: 300});
                     return marker;
                 }
-                """
+                """ % commented_js
                 FastMarkerCluster(map_data_list, callback=callback).add_to(m)
             return m
 
         # Prepare list for FastMarkerCluster (caching requires simple types)
         if not display_map_df.empty:
-             marker_data = display_map_df[['_plot_lat', '_plot_lon', owner_col, addr_col]].values.tolist()
+             marker_data = display_map_df[['_plot_lat', '_plot_lon', owner_col, addr_col, county_col]].values.tolist()
         else:
              marker_data = []
 
@@ -345,8 +400,72 @@ try:
             final_filtered_df[display_cols],
             column_config=column_config,
             hide_index=True,
-            use_container_width=True
+            use_container_width=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="property_table",
         )
+
+        # ------------------------------------------------ Outreach log
+        # Row selected in the table above → show its thread (+ form for editors)
+        st.subheader("💬 Outreach Log")
+        sel = st.session_state.get("property_table", {}).get("selection", {}).get("rows", [])
+        store = CommentsStore()
+
+        if not sel:
+            st.caption("Select a row in the table above to view and add outreach notes.")
+        else:
+            row = final_filtered_df.iloc[sel[0]]
+            sel_county = str(row[county_col])
+            sel_address = str(row[addr_col])
+            st.markdown(f"**🏠 {row[owner_col]}** — {sel_address}, {sel_county}")
+
+            if not store.enabled:
+                st.info("Comments backend not configured. Set SUPABASE_URL / SUPABASE_ANON_KEY (see README).")
+            else:
+                try:
+                    comments = store.get_comments(sel_county, sel_address)
+                except Exception as e:
+                    comments = []
+                    st.error(f"Could not load notes: {e}")
+
+                if comments:
+                    for c in comments:
+                        when = (c.get("outreach_date") or "")[:10]
+                        otype = c.get("outreach_type") or "note"
+                        st.markdown(
+                            f"**{c['author']}** · {otype} · {when} · "
+                            f"`{(c.get('created_at') or '')[:10]}`\n\n{c['comment']}"
+                        )
+                        st.markdown("---")
+                else:
+                    st.caption("No outreach recorded for this address yet.")
+
+                if st.session_state.get("editor_ok"):
+                    with st.form("add_note", clear_on_submit=True):
+                        c1, c2 = st.columns(2)
+                        outreach_type = c1.selectbox("Type", OUTREACH_TYPES)
+                        outreach_date = c2.date_input("Date").isoformat()
+                        comment = st.text_area("Note — what was said, outcome, next step", height=100)
+                        submitted = st.form_submit_button("➕ Add outreach note")
+                    if submitted:
+                        if not comment.strip():
+                            st.warning("Note text is required.")
+                        else:
+                            try:
+                                store.add_comment(
+                                    county=sel_county, address=sel_address,
+                                    author=st.session_state.get("editor_name", ""),
+                                    comment=comment, outreach_type=outreach_type,
+                                    outreach_date=outreach_date,
+                                )
+                                commented_keys.clear()
+                                st.success("Note saved.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Save failed: {e}")
+                else:
+                    st.info("Read-only view. Unlock editor access in the sidebar to add notes.")
 
         # Refresh Button
         if st.button("🔄 Refresh Data"):
