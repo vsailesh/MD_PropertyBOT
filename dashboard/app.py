@@ -17,13 +17,7 @@ st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_ic
 
 st.markdown("""
 <style>
-    /* Main background and text */
-    .stApp {
-        background-color: #0e1117;
-        color: #ffffff !important;
-    }
-    
-    /* Metrics Styling */
+    /* Theme lives in .streamlit/config.toml (all pages). Page-level polish: */
     [data-testid="stMetric"] {
         background-color: #1e2130;
         padding: 20px;
@@ -31,27 +25,14 @@ st.markdown("""
         border: 1px solid #3e4461;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    
     [data-testid="stMetricLabel"] {
         color: #ccd0d8 !important;
         font-weight: 600 !important;
         font-size: 16px !important;
     }
-    
     [data-testid="stMetricValue"] {
         color: #ffffff !important;
         font-weight: 800 !important;
-    }
-
-    /* Headers */
-    h1, h2, h3 {
-        color: #ff4b4b !important;
-        font-family: 'Inter', sans-serif;
-    }
-    
-    /* Sidebar text fix */
-    .css-1d391kg {
-        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -289,7 +270,23 @@ try:
         _commented = commented_keys()
 
         def create_map(map_data_list, center_lat, center_lon, zoom):
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=zoom, control_scale=True)
+            # Esri Dark Gray Canvas: free, no API key, no watermark
+            # (CARTO's free tier stamps diagonal "API KEY REQUIRED" tiles).
+            m = folium.Map(
+                location=[center_lat, center_lon], zoom_start=zoom,
+                control_scale=True,
+                tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/"
+                       "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"),
+                attr="Esri, HERE, Garmin, © OpenStreetMap contributors",
+            )
+            # Dark control styling inside the map iframe
+            m.get_root().html.add_child(folium.Element(
+                "<style>"
+                ".leaflet-control-zoom a { background:#1e2130 !important; color:#fff !important; font-size:22px !important; }"
+                ".leaflet-control-zoom a:hover { background:#2a2f45 !important; }"
+                ".leaflet-container { background:#0e1117; }"
+                "</style>"
+            ))
             if map_data_list:
                 from folium.plugins import FastMarkerCluster
                 # Keys of properties that already have outreach notes —
@@ -409,6 +406,7 @@ try:
             use_container_width=True,
             on_select="rerun",
             selection_mode="single-row",
+            height=320,
             key="property_table",
         )
 

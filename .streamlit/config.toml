@@ -1,0 +1,7 @@
+# Global theme — applies to every page (dashboard, Outreach Review, Admin).
+[theme]
+base = "dark"
+primaryColor = "#ff4b4b"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1e2130"
+textColor = "#ffffff"

@@ -97,7 +97,8 @@ with tab_logins:
         st.warning(f"Auth events not reachable: {e} — paste supabase_admin.sql first.")
     if events:
         edf = pd.DataFrame(events)
-        edf["created_at"] = pd.to_datetime(edf["created_at"], errors="coerce")
+        # tz-aware timestamptz -> naive UTC (same reason as review page)
+        edf["created_at"] = pd.to_datetime(edf["created_at"], errors="coerce", utc=True).dt.tz_localize(None)
         emails = sorted(edf["email"].dropna().unique().tolist())
         sel = st.multiselect("Filter by email", emails, default=emails)
         fdf = edf[edf["email"].isin(sel)].sort_values("created_at", ascending=False)
@@ -131,7 +132,7 @@ with tab_notes:
         st.error(f"Could not load notes: {e}")
     if rows:
         ndf = pd.DataFrame(rows)
-        ndf["created_at"] = pd.to_datetime(ndf["created_at"], errors="coerce")
+        ndf["created_at"] = pd.to_datetime(ndf["created_at"], errors="coerce", utc=True).dt.tz_localize(None)
         authors = sorted(ndf["author"].dropna().unique().tolist())
         sel_authors = st.multiselect("Author", authors, default=authors)
         fdf = ndf[ndf["author"].isin(sel_authors)].sort_values("created_at", ascending=False)

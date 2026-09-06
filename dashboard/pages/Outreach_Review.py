@@ -45,8 +45,10 @@ df = pd.DataFrame(rows)
 for col in ("county", "address", "author", "outreach_type", "comment"):
     if col not in df.columns:
         df[col] = ""
-df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce")
-df["outreach_date"] = pd.to_datetime(df.get("outreach_date"), errors="coerce")
+# Supabase timestamptz parses tz-aware; normalize to naive UTC so date
+# comparisons against local dates/Timestamp.now() never explode.
+df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True).dt.tz_localize(None)
+df["outreach_date"] = pd.to_datetime(df.get("outreach_date"), errors="coerce", utc=True).dt.tz_localize(None)
 
 # ------------------------------------------------------------ filters
 with st.sidebar:
