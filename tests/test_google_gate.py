@@ -43,9 +43,9 @@ def test_mock_user_not_allowlisted():
 
 
 def test_editor_emails_from_secrets():
-    # import the helpers without running the whole script body twice
-    ns = runpy.run_path(DASH)  # executes app.py once (bare mode: st.* no-ops)
-    editors = ns["_editor_emails"]()
+    sys.path.insert(0, os.path.join(REPO, "dashboard"))
+    from auth_gate import editor_emails
+    editors = editor_emails()
     assert isinstance(editors, set)
     assert all(e == e.lower() for e in editors)
     assert "adhvaithinc@gmail.com" in editors  # project owner account

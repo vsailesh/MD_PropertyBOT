@@ -11,6 +11,7 @@ import os
 # comments_store module importable both locally and on Streamlit Cloud
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from comments_store import CommentsStore, OUTREACH_TYPES
+from auth_gate import current_user as _current_user, is_editor as _is_editor
 
 st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_icon="🏠")
 
@@ -83,39 +84,6 @@ def commented_keys():
 
 def _norm(text):
     return " ".join(str(text or "").upper().split())
-
-
-def _editor_emails():
-    """Allowlist from st.secrets (list) or env/.env (comma-separated)."""
-    try:
-        vals = list(st.secrets.get("EDITOR_EMAILS", []))
-    except Exception:
-        vals = []
-    if not vals:
-        from comments_store import _load_env_file
-        env = dict(os.environ)
-        env.update(_load_env_file())
-        raw = env.get("EDITOR_EMAILS", "")
-        vals = [v.strip() for v in raw.split(",") if v.strip()]
-    return {v.lower() for v in vals}
-
-
-def _current_user():
-    """Logged-in Google identity or None. st.user is always present in
-    recent Streamlit; it's just empty when unauthenticated."""
-    try:
-        u = st.user
-        email = (getattr(u, "email", None) or (u.get("email") if hasattr(u, "get") else None) or "")
-        if email:
-            name = getattr(u, "name", None) or email
-            return {"email": str(email).lower(), "name": str(name)}
-    except Exception:
-        pass
-    return None
-
-
-def _is_editor(user):
-    return bool(user and user["email"] in _editor_emails())
 
 @st.cache_data
 def load_data(file):

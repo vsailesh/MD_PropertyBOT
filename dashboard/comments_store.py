@@ -119,6 +119,18 @@ class CommentsStore:
         resp.raise_for_status()
         return resp.json()
 
+    def all_comments(self) -> list:
+        """Every note, newest first — for the review page."""
+        resp = requests.get(
+            f"{self.url}/rest/v1/outreach_comments",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            params={"order": "created_at.desc", "limit": "50000"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     def all_commented(self) -> set:
         """Set of normalized (COUNTY, ADDRESS) keys that have notes —
         used to badge map markers without per-marker requests."""
