@@ -97,7 +97,7 @@ Scrape step drains through Cloudflare blocks via the watchdog (10-min backoff lo
 
 Comment thread under each property — outreach history so the next person
 knows what was already said. Anyone viewing the dashboard **reads** notes;
-only people with the editor password can **add** them.
+only allowlisted Google accounts can **add** them.
 
 Setup (Supabase free tier — the comments store must be writable from
 Streamlit Cloud, whose filesystem is ephemeral; the Turso property DB is
@@ -127,7 +127,12 @@ read-only on the free plan):
    ```
 
 3. Project Settings → API → copy **Project URL** and **anon public key**
-4. Configure secrets (Streamlit Cloud → Settings → Secrets, or
+4. Google OAuth client (Google Cloud Console → Google Auth Platform, project
+   `usa-vfv`): create an OAuth **Web** client with redirect URI
+   `http://localhost:8501/oauth2callback` (on Streamlit Cloud:
+   `https://YOURAPP.streamlit.app/oauth2callback`), then on **Audience** add
+   every editor email as a test user (app stays in "Testing" status).
+5. Configure secrets (Streamlit Cloud → Settings → Secrets, or
    `.streamlit/secrets.toml` locally — template in
    `.streamlit/secrets.toml.example`):
 
@@ -136,12 +141,21 @@ read-only on the free plan):
    url = "https://YOURPROJECT.supabase.co"
    anon_key = "eyJ..."
 
-   EDITOR_PASSWORD = "shared-editor-password"
+   EDITOR_EMAILS = ["you@gmail.com"]
+
+   [auth]
+   redirect_uri = "http://localhost:8501/oauth2callback"
+   cookie_secret = "<python -c 'import secrets; print(secrets.token_urlsafe(32))'>"
+
+   [auth.google]
+   client_id = "000000000000-xxxx.apps.googleusercontent.com"
+   client_secret = "GOCSPX-..."
+   server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration"
    ```
 
 Usage: pick a row in the property table → Outreach Log section below shows
-the thread; unlock editor access in the sidebar to add a note. Markers with
-existing notes turn green with a 💬 badge.
+the thread; editors sign in with Google in the sidebar to add a note. Markers
+with existing notes turn green with a 💬 badge.
 
 ## Keeping Data Fresh
 
