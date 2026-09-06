@@ -157,6 +157,23 @@ Usage: pick a row in the property table → Outreach Log section below shows
 the thread; editors sign in with Google in the sidebar to add a note. Markers
 with existing notes turn green with a 💬 badge.
 
+### Admin page (editors' editors)
+
+`ADMIN_EMAILS` in secrets sees the **🛡️ Admin** page: add/remove editors at
+runtime (DB list — no redeploy), browse editor login activity, and delete
+notes (moderation). One-time setup — paste [`supabase_admin.sql`](supabase_admin.sql)
+in the Supabase SQL Editor (creates `auth_events` + `editors` tables, allows
+note deletion). New editors still need the GCP test-user step (Google blocks
+unknown logins before the app sees them). Note deletion relaxes the strict
+append-only audit trail — the anon key can technically delete via the API
+directly; the app gates the UI, not the API.
+
+### Reviewing outreach at a glance
+
+The **📋 Outreach Review** page (editors only) lists every note with
+author/type/county/date/text filters, per-author and per-type breakdowns,
+and CSV export — for quality checks and pipeline reviews.
+
 ## Keeping Data Fresh
 
 - **Weekly rotation** (launchd `com.marylandproperty.refresh`, Sun 02:07): re-scrapes the 2,000 stalest streets with **replace semantics** — a street's old rows are deleted before the new ones land, so owner changes and vanished parcels actually update. Full state cycles every ~3 months.

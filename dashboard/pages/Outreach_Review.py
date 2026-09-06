@@ -19,6 +19,9 @@ st.title("📋 Outreach Review")
 st.caption("Every outreach note in one place — filter, review quality, export.")
 
 user = current_user()
+if user and is_editor(user) and not st.session_state.get("_login_logged_review"):
+    st.session_state._login_logged_review = True
+    CommentsStore().log_auth_event(user["email"], user["name"], "review")
 if not (user and is_editor(user)):
     st.info("Editors only. Sign in with Google on the main dashboard page, then come back here.")
     st.stop()

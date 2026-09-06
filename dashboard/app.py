@@ -198,6 +198,9 @@ try:
         # outreach notes; only allowlisted accounts can add them.
         st.sidebar.markdown("---")
         user = _current_user()
+        if user and _is_editor(user) and not st.session_state.get("_login_logged"):
+            st.session_state._login_logged = True
+            CommentsStore().log_auth_event(user["email"], user["name"], "dashboard")
         if user and _is_editor(user):
             st.sidebar.success(f"✍️ Commenting as **{user['name']}** ({user['email']})")
             if st.sidebar.button("Sign out"):

@@ -64,6 +64,10 @@ def _norm(text) -> str:
     return " ".join(str(text or "").upper().split())
 
 
+def _norm_email(email) -> str:
+    return str(email or "").strip().lower()
+
+
 class CommentsStore:
     def __init__(self):
         self.url, self.key = _config()
@@ -130,6 +134,73 @@ class CommentsStore:
         )
         resp.raise_for_status()
         return resp.json()
+
+    # -------------------------------------------------------- admin
+    def delete_comment(self, comment_id) -> None:
+        """Remove one note by id (admin moderation)."""
+        resp = requests.delete(
+            f"{self.url}/rest/v1/outreach_comments",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            params={"id": f"eq.{comment_id}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+    def log_auth_event(self, email: str, name: str, page: str) -> None:
+        """Record an editor visit (best effort — never break the page)."""
+        try:
+            requests.post(
+                f"{self.url}/rest/v1/auth_events",
+                headers=self.headers,
+                json=[{"email": _norm_email(email), "name": name, "page": page}],
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    def get_auth_events(self, limit: int = 1000) -> list:
+        resp = requests.get(
+            f"{self.url}/rest/v1/auth_events",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            params={"order": "created_at.desc", "limit": str(limit)},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_editors(self) -> list:
+        """Editors from the DB-managed allowlist (not secrets)."""
+        resp = requests.get(
+            f"{self.url}/rest/v1/editors",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            params={"order": "created_at.asc", "limit": "1000"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def add_editor(self, email: str, name: str, added_by: str) -> None:
+        resp = requests.post(
+            f"{self.url}/rest/v1/editors",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            json=[{"email": _norm_email(email), "name": name, "added_by": added_by}],
+            timeout=15,
+        )
+        resp.raise_for_status()
+
+    def remove_editor(self, email: str) -> None:
+        resp = requests.delete(
+            f"{self.url}/rest/v1/editors",
+            headers={k: v for k, v in self.headers.items()
+                     if k != "Prefer"},
+            params={"email": f"eq.{_norm_email(email)}"},
+            timeout=15,
+        )
+        resp.raise_for_status()
 
     def all_commented(self) -> set:
         """Set of normalized (COUNTY, ADDRESS) keys that have notes —
