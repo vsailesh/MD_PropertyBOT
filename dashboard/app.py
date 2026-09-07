@@ -270,21 +270,33 @@ try:
         _commented = commented_keys()
 
         def create_map(map_data_list, center_lat, center_lon, zoom):
-            # Esri Dark Gray Canvas: free, no API key, no watermark
-            # (CARTO's free tier stamps diagonal "API KEY REQUIRED" tiles).
+            # Esri Light Gray Canvas (base + reference labels): light like the
+            # original OSM map but cleaner, all streets/labels, keyless
+            # (CARTO light styles watermark after free quota).
             m = folium.Map(
                 location=[center_lat, center_lon], zoom_start=zoom,
-                control_scale=True,
-                tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/"
-                       "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"),
-                attr="Esri, HERE, Garmin, © OpenStreetMap contributors",
+                control_scale=True, tiles=None,
             )
-            # Dark control styling inside the map iframe
+            # Esri Canvas stops at z16; above it Leaflet upscales
+            # instead of showing "Map data not yet available" tiles.
+            folium.TileLayer(
+                tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/"
+                       "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}"),
+                attr="Esri, HERE, Garmin, © OpenStreetMap contributors",
+                name="Basemap", max_native_zoom=16, max_zoom=19,
+            ).add_to(m)
+            folium.TileLayer(
+                tiles=("https://server.arcgisonline.com/ArcGIS/rest/services/"
+                       "Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}"),
+                attr="Esri, HERE, Garmin", overlay=True, show=True,
+                name="Labels", max_native_zoom=16, max_zoom=19,
+            ).add_to(m)
+            # Light control styling inside the map iframe
             m.get_root().html.add_child(folium.Element(
                 "<style>"
-                ".leaflet-control-zoom a { background:#1e2130 !important; color:#fff !important; font-size:22px !important; }"
-                ".leaflet-control-zoom a:hover { background:#2a2f45 !important; }"
-                ".leaflet-container { background:#0e1117; }"
+                ".leaflet-control-zoom a { background:#ffffff !important; color:#1e2130 !important; font-size:22px !important; border-color:#ccc !important; }"
+                ".leaflet-control-zoom a:hover { background:#f0f0ec !important; }"
+                ".leaflet-container { background:#f5f5f0; }"
                 "</style>"
             ))
             if map_data_list:
