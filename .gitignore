@@ -39,3 +39,7 @@ logs/
 
 # streamlit secrets
 .streamlit/secrets.toml
+
+# local agent/tool config
+.claude/
+.codex/
