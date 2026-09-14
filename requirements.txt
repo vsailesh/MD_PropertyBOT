@@ -1,4 +1,5 @@
-# Maryland Property Dashboard - Requirements
+# Dashboard runtime (also used by Streamlit Cloud builds).
+# Full pipeline/ML toolchain lives in requirements-full.txt.
 
 # Core
 streamlit[auth]>=1.54.0
@@ -6,24 +7,8 @@ pandas>=2.0.0
 requests>=2.31.0
 
 # Maps
-pydeck>=0.8.0
 folium>=0.14.0
 streamlit-folium>=0.15.0
 
-# Web Automation
-selenium>=4.15.0
-webdriver-manager>=4.0.0
-
-# Excel Export
+# Excel export
 openpyxl>=3.1.0
-
-# Race/Ethnicity Prediction
-ethnicolr>=0.10.0
-scikit-learn>=1.8.0
-
-# Optional (for advanced features)
-geopy>=2.4.0
-plotly>=5.18.0
-flask>=2.3.0
-flask-cors>=4.0.0
-python-dotenv>=1.0.0
