@@ -773,7 +773,7 @@ class PropertyDatabase:
             if source: source.close()
             if dest: dest.close()
 
-    def _rotate_backups(self, max_backups: int = 5):
+    def _rotate_backups(self, max_backups: int = 2):
         """
         Keep only the most recent N backups of the database.
         """
