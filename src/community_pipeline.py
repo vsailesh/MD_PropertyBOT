@@ -608,8 +608,17 @@ class SDATAutoScraper:
         
         # New requests session for faster, non-blocked scraping
         self.session = requests.Session()
+        # Rotating UA pool — one static stale fingerprint is what the
+        # Cloudflare WAF eventually keys on during long rotations.
+        self._ua_pool = [
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+        ]
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'User-Agent': self._ua_pool[0],
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
             'Connection': 'keep-alive',
@@ -741,8 +750,11 @@ class SDATAutoScraper:
                 print(f"  🌐 Trying search: {street_query} in {county} (Requests)")
 
                 # Politeness throttle — keep request rate human-like so we
-                # don't trip Cloudflare rate-based blocking again
-                time.sleep(1.5 + (len(street_query) % 7) * 0.25)
+                # don't trip Cloudflare rate-based blocking again. Rotate UA
+                # per street so long rotations don't fingerprint one client.
+                import random as _random
+                self.session.headers['User-Agent'] = _random.choice(self._ua_pool)
+                time.sleep(2.5 + _random.random() * 3.5)
 
                 # Step 0: GET base page to get initial ViewState
                 resp = self.session.get(self.base_url, timeout=30)
