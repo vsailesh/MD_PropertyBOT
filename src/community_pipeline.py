@@ -610,10 +610,10 @@ class SDATAutoScraper:
         self.session = requests.Session()
         # Rotating UA pool — one static stale fingerprint is what the
         # Cloudflare WAF eventually keys on during long rotations.
+        # Oct 2026: the SDAT WAF 403s the Mac/Windows Chrome UA strings
+        # from this IP (verified: those 403, the ones below 200). Safari
+        # passed once then flaked to 403 — only proven-stable UAs here.
         self._ua_pool = [
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0',
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
         ]
@@ -692,12 +692,25 @@ class SDATAutoScraper:
             )
 
     def is_blocked(self) -> bool:
-        """Cheap single-request probe: is SDAT currently blocking this IP?"""
-        try:
-            r = self.session.get(self.base_url, timeout=15)
-            return r.status_code == 403 or "Attention Required" in r.text[:2000]
-        except requests.RequestException:
-            return False  # network error is not a block — let normal retries handle it
+        """Cheap probe: is SDAT currently blocking us?
+
+        The WAF 403s per-UA (not whole-IP), so try each pool UA with a
+        gap — any 200 means we're not blocked, just that UA is hot.
+        """
+        import time as _time
+        for i, ua in enumerate(self._ua_pool):
+            if i:
+                _time.sleep(5)
+            try:
+                self.session.headers['User-Agent'] = ua
+                r = self.session.get(self.base_url, timeout=15)
+                if r.status_code == 200:
+                    return False
+                if r.status_code != 403 and "Attention Required" not in r.text[:2000]:
+                    return False  # not a block page — treat as reachable
+            except requests.RequestException:
+                return False  # network error is not a block — let normal retries handle it
+        return True
 
     def search_street_bulk(self, street_name: str, county: str) -> list[dict]:
         """
