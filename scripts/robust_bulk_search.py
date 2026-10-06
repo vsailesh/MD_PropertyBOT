@@ -647,9 +647,11 @@ Pipeline Order:
         else:
             # Resume the OLDEST in_progress batch — FIFO, so a batch queued
             # behind a draining one (e.g. statewide after a gap backfill)
-            # doesn't jump the queue
+            # doesn't jump the queue. 'interrupted' batches (SIGTERM'd by
+            # the night-window kill) are resumable too — excluding them
+            # orphans every window-killed batch.
             batches = searcher.db.get_all_batches()
-            incomplete = [b for b in batches if b['status'] == 'in_progress']
+            incomplete = [b for b in batches if b['status'] in ('in_progress', 'interrupted')]
 
             if incomplete:
                 batch_id = searcher.resume_job(batch_id=incomplete[-1]['id'])

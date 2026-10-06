@@ -96,7 +96,7 @@ while true; do
     PENDING=$(sqlite3 data/property_search.db "
         SELECT COUNT(*) FROM search_progress sp
         JOIN batches b ON sp.batch_id = b.id
-        WHERE b.status = 'in_progress' AND sp.status = 'pending'")
+        WHERE b.status IN ('in_progress', 'interrupted') AND sp.status = 'pending'")
 
     if [ "$PENDING" -gt 0 ] 2>/dev/null; then
         if [ -n "$LAST_PENDING" ] && [ "$PENDING" -lt "$LAST_PENDING" ]; then
