@@ -645,18 +645,26 @@ Pipeline Order:
             batch_id = searcher.create_job_from_excel(args.input, args.name,
                                                       force=getattr(args, 'force', False))
         else:
-            # Resume the OLDEST in_progress batch — FIFO, so a batch queued
+            # Resume the OLDEST unfinished batch — FIFO, so a batch queued
             # behind a draining one (e.g. statewide after a gap backfill)
             # doesn't jump the queue. 'interrupted' batches (SIGTERM'd by
             # the night-window kill) are resumable too — excluding them
-            # orphans every window-killed batch.
-            batches = searcher.db.get_all_batches()
+            # orphans every window-killed batch. Skip batches with zero
+            # remaining streets (ancient interrupted ones would otherwise
+            # win the FIFO pick and waste the pass).
+            batches = searcher.db.get_all_batches()  # started_at DESC
             incomplete = [b for b in batches if b['status'] in ('in_progress', 'interrupted')]
 
-            if incomplete:
-                batch_id = searcher.resume_job(batch_id=incomplete[-1]['id'])
+            batch_id = None
+            for b in reversed(incomplete):  # oldest first
+                prog = searcher.db.get_search_progress(b['id'])
+                if prog['pending'] + prog['in_progress'] > 0:
+                    batch_id = b['id']
+                    break
+            if batch_id is not None:
+                batch_id = searcher.resume_job(batch_id=batch_id)
             else:
-                print("No incomplete batch found. Use --input to create a new job.")
+                print("No incomplete batch with pending streets. Use --input to create a new job.")
                 return
 
         if batch_id:

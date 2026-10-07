@@ -24,8 +24,11 @@ WIN_END=360     # 06:00
 # aggravate the Cloudflare WAF. Busy → exit, the running one owns the queue.
 LOCK=/tmp/sdat_watchdog.lock
 if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null; then
-    echo "$(date '+%F %T') another watchdog already running (pid $(cat "$LOCK")) — exiting" >> "$LOG"
-    exit 0
+    echo "$(date '+%F %T') another watchdog already running (pid $(cat "$LOCK")) — exiting (queue owned)" >> "$LOG"
+    # Exit 3 = "did no work, another watchdog owns the queue". Callers
+    # (refresh_rotation --run) must NOT treat this as a drained success —
+    # it caused a false-success marker on 2026-10-07.
+    exit 3
 fi
 echo $$ > "$LOCK"
 trap 'rm -f "$LOCK"' EXIT
