@@ -97,6 +97,10 @@ class PropertyDatabase:
                     -- Geocoding fields
                     latitude REAL,
                     longitude REAL,
+                    -- SDAT grid fields (browser engine): account number and
+                    -- map/parcel key — the join key to the bulk parcel store
+                    account_id TEXT,
+                    map_parcel TEXT,
                     -- Metadata
                     batch_id INTEGER,
                     checksum TEXT,
@@ -134,6 +138,15 @@ class PropertyDatabase:
                     metadata TEXT
                 )
             """)
+
+            # Migrations for databases created before the browser-engine
+            # columns existed. ALTER throws "duplicate column name" when
+            # the column is already there — that's the guard.
+            for col, decl in (("account_id", "TEXT"), ("map_parcel", "TEXT")):
+                try:
+                    conn.execute(f"ALTER TABLE properties ADD COLUMN {col} {decl}")
+                except sqlite3.OperationalError:
+                    pass
 
             # Integrity check table
             conn.execute("""
@@ -505,7 +518,10 @@ class PropertyDatabase:
                 prop.get('is_hindu', 0),
                 prop.get('sub_category'),
                 batch_id,
-                checksum
+                checksum,
+                self.normalize_text(prop.get('account_id')) or
+                self.normalize_text(prop.get('account')),
+                self.normalize_text(prop.get('map_parcel')),
             ))
 
         with self._transaction() as conn:
@@ -525,8 +541,8 @@ class PropertyDatabase:
                 INSERT OR REPLACE INTO properties
                 (street_name, county, owner_name, address, city, state, zip_code,
                  source_street, predicted_race, race_confidence, race_method,
-                 is_hindu, sub_category, batch_id, checksum)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 is_hindu, sub_category, batch_id, checksum, account_id, map_parcel)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, rows)
 
         added = len(rows)
