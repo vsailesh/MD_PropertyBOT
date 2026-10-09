@@ -1,12 +1,17 @@
 #!/bin/bash
 # SDAT watchdog: keep a scrape batch running through intermittent Cloudflare
-# blocks. Probes nothing itself — `robust_bulk_search run` already gates on a
-# 3-probe check and aborts cleanly when blocked; streets stay pending. This
-# loop just retries until the pending queue drains.
+# blocks. Probes nothing itself — the browser engine's landing step aborts
+# cleanly when the challenge doesn't clear; streets stay pending. This loop
+# just retries until the pending queue drains.
+#
+# Engine: sdat_browser_scraper.py (organic Chrome over CDP). The old
+# requests engine (robust_bulk_search run) is dead — since Oct 2026 the WAF
+# 403s every automated POST and the results UI became a paginated grid.
 #
 # Night window: passes only START inside 01:00-06:00 (low SDAT traffic), and
 # each pass is killed at window end — the batch resumes next night. SQLite
-# state is crash-proof, so the interrupt is safe. Override for manual runs:
+# state is crash-proof, so the interrupt is safe. The kill is SIGTERM; the
+# scraper's handler closes Chrome before exiting. Override for manual runs:
 #   SDAT_ANYTIME=1 ./scripts/sdat_watchdog.sh ...
 #
 # Any args pass through to the run command, e.g.:
@@ -83,8 +88,10 @@ while true; do
     else
         ARGS=""
     fi
-    # Kill the pass at window end (crash-proof resume picks up next night)
-    ./venv/bin/python scripts/robust_bulk_search.py run --no-filter $ARGS >> "$LOG" 2>&1 &
+    # Kill the pass at window end (crash-proof resume picks up next night).
+    # TERM the whole tree: python's handler closes Chrome, then we reap any
+    # orphaned browser directly so port 9223 is free for the next pass.
+    ./venv/bin/python scripts/sdat_browser_scraper.py run $ARGS >> "$LOG" 2>&1 &
     RUN_PID=$!
     if [ -z "$SDAT_ANYTIME" ] && [ "$LEFT" -gt 0 ]; then
         ( sleep "$LEFT"; kill "$RUN_PID" 2>/dev/null ) &
@@ -94,6 +101,10 @@ while true; do
     fi
     wait "$RUN_PID" 2>/dev/null
     [ -n "$TIMER_PID" ] && kill "$TIMER_PID" 2>/dev/null
+    # Reap orphaned scraper browser (belt+braces — python's SIGTERM
+    # handler should have closed it already)
+    pkill -f "remote-debugging-port=9223" 2>/dev/null
+    sleep 2
     FIRST=0
 
     PENDING=$(sqlite3 data/property_search.db "

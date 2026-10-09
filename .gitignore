@@ -43,3 +43,6 @@ logs/
 # local agent/tool config
 .claude/
 .codex/
+
+# harvested CF clearance cookies (short-lived secret artifact)
+data/.sdat_clearance.json
