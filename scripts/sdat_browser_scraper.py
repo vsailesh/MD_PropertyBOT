@@ -61,6 +61,31 @@ COUNTY_MAP = {
 }
 
 
+def name_variants(street: str):
+    """Search-name variations, proven from the requests-engine era — SDAT
+    needs the registered spelling (ST vs SAINT, MC spacing, BALTO/NATL
+    abbreviations), and zero-result re-scrapes would just re-zero without
+    trying them. Base form first; only walked when the base finds nothing.
+    """
+    base = " ".join(str(street).upper().split())
+    if not base or base == "UNKNOWN":
+        return []
+    out = [base]
+    if " " in base:
+        out.append(base.replace(" ", ""))
+    elif base.startswith("MC") and len(base) > 2:
+        out.append(base.replace("MC", "MC ", 1))
+    if base.startswith("ST "):
+        out.append(base.replace("ST ", "SAINT ", 1))
+    elif base.startswith("SAINT "):
+        out.append(base.replace("SAINT ", "ST ", 1))
+    if "BALTIMORE" in base:
+        out.append(base.replace("BALTIMORE", "BALTO"))
+    if "NATIONAL" in base:
+        out.append(base.replace("NATIONAL", "NATL"))
+    return list(dict.fromkeys(v for v in out if v and v != "UNKNOWN"))
+
+
 def county_id(county: str) -> str:
     """Normalize a county name to its SDAT dropdown value."""
     c = (county or "").upper().strip()
@@ -469,7 +494,13 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                 db.mark_street_completed(street, county, 0, error=f"county unmapped: {county}")
                 continue
             try:
-                ok = b.search_street(street, cid)
+                # try the base spelling, then the proven variants — only
+                # walked when the previous form returned nothing
+                ok = False
+                for variant in name_variants(street):
+                    if b.search_street(variant, cid):
+                        ok = True
+                        break
             except BrowserBlockedError as e:
                 print(f"BLOCKED mid-run after {done} streets: {e}")
                 return 2
