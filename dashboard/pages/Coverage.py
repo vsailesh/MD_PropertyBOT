@@ -99,11 +99,13 @@ with right:
             "total_streets": "Total", "pending": "Pending", "done": "Done"}),
             use_container_width=True, hide_index=True)
         pending = int(queue["pending"].sum())
-        # engine pace: ~10 s/street inside the 01:00-06:00 window ≈ 1,500/night
-        nights = max(1, -(-pending // 1500))
+        # engine pace measured on real drains (batches 191/193): ~630
+        # streets/night inside the 01:00-06:00 window — big streets fan
+        # out to many grid pages, so this beats the 10 s/street figure
+        nights = max(1, -(-pending // 630))
         st.info(f"**{pending:,} streets pending** — browser engine drains "
-                f"~1,500/night (01:00–06:00 window) ≈ **{nights} more "
-                f"night{'s' if nights > 1 else ''}** to clear the queue.")
+                f"~630/night (01:00–06:00 window) ≈ **{nights} more "
+                f"nights** to clear the queue.")
 
 st.divider()
 st.markdown(
