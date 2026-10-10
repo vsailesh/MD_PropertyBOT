@@ -25,6 +25,30 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAIN_DB = os.path.join(ROOT, "data", "property_search.db")
 BULK_DB = os.path.join(ROOT, "data", "md_bulk.db")
 
+# SDAT's grid shows the account WITHOUT the county prefix for most
+# jurisdictions (PG '14 1581511' = MDP '17'+'14'+'1581511'); Baltimore
+# City accounts match raw. Lookup tries raw digits first, then the
+# county-prefixed form.
+COUNTY_CODE = {
+    'ALLEGANY': '01', 'ANNE ARUNDEL': '02', 'BALTIMORE CITY': '03',
+    'BALTIMORE COUNTY': '04', 'CALVERT': '05', 'CAROLINE': '06',
+    'CARROLL': '07', 'CECIL': '08', 'CHARLES': '09', 'DORCHESTER': '10',
+    'FREDERICK': '11', 'GARRETT': '12', 'HARFORD': '13', 'HOWARD': '14',
+    'KENT': '15', 'MONTGOMERY': '16', "PRINCE GEORGE'S": '17',
+    'QUEEN ANNE\'S': '18', 'ST. MARY\'S': '19', 'SOMERSET': '20',
+    'TALBOT': '21', 'WASHINGTON': '22', 'WICOMICO': '23', 'WORCESTER': '24',
+}
+
+
+def county_code(county: str):
+    c = (county or "").upper().strip()
+    is_city = c.endswith(" CITY")
+    for s in (" COUNTY", " CITY"):
+        if c.endswith(s):
+            c = c[: -len(s)].strip()
+            break
+    return COUNTY_CODE.get(c + (" CITY" if is_city else "")) or COUNTY_CODE.get(c)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -38,7 +62,7 @@ def main():
 
     # candidate rows: browser-engine rows still missing coords
     rows = cur.execute("""
-        SELECT p.id, p.account_id, p.address, p.latitude, p.city
+        SELECT p.id, p.account_id, p.address, p.latitude, p.city, p.county
         FROM properties p
         WHERE p.account_id IS NOT NULL AND p.account_id != ''
           AND (p.latitude IS NULL OR p.city IS NULL OR p.city = '')
@@ -47,15 +71,26 @@ def main():
         print("nothing to backfill (0 rows missing coords with account_id)")
         return 0
 
-    # one bulk lookup per distinct account
-    accts = {r[1].replace(" ", "") for r in rows}
-    bulk = {}
-    for acct in accts:
+    # one bulk lookup per distinct (county, account) — raw digits first,
+    # then county-prefixed (see COUNTY_CODE note above)
+    lookup_cache = {}
+
+    def bulk_lookup(county, acct):
+        key = (county, acct)
+        if key in lookup_cache:
+            return lookup_cache[key]
+        d = acct.replace(" ", "")
         b = cur.execute(
             """SELECT lat, lon, city, zip, hnum, street FROM bulk.parcels
-               WHERE account_id = ?""", (acct,)).fetchone()
-        if b:
-            bulk[acct] = b
+               WHERE account_id = ?""", (d,)).fetchone()
+        if not b:
+            cc = county_code(county)
+            if cc and not d.startswith(cc):
+                b = cur.execute(
+                    """SELECT lat, lon, city, zip, hnum, street FROM bulk.parcels
+                       WHERE account_id = ?""", (cc + d,)).fetchone()
+        lookup_cache[key] = b
+        return b
 
     upd_coord = 0
     upd_addr = 0
@@ -63,8 +98,8 @@ def main():
     coord_sql = "UPDATE properties SET latitude=?, longitude=?, city=?, zip_code=? WHERE id=?"
     addr_sql = "UPDATE properties SET address=? WHERE id=?"
     coord_params, addr_params = [], []
-    for pid, acct, address, lat, city in rows:
-        b = bulk.get(acct.replace(" ", ""))
+    for pid, acct, address, lat, city, county in rows:
+        b = bulk_lookup(county, acct)
         if not b:
             no_match += 1
             continue

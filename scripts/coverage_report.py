@@ -141,13 +141,20 @@ def compute_coverage(per_county=True):
         "WHERE account_id IS NOT NULL AND account_id != ''").fetchone()[0]
     exact_matched = None
     if exact_acct:
+        # SDAT grid accounts omit the county prefix for most jurisdictions
+        # (Baltimore City matches raw) — try raw digits, then CC-prefixed
+        from backfill_coords import county_code
         bulk_accts = {r[0] for r in cur.execute(
             "SELECT DISTINCT account_id FROM bulk.parcels "
             "WHERE account_id IS NOT NULL AND account_id != ''")}
-        scr_accts = {r[0].replace(" ", "") for r in cur.execute(
-            "SELECT DISTINCT account_id FROM properties "
-            "WHERE account_id IS NOT NULL AND account_id != ''")}
-        exact_matched = len(scr_accts & bulk_accts)
+        hit = 0
+        for acct, county in cur.execute(
+                "SELECT DISTINCT account_id, county FROM properties "
+                "WHERE account_id IS NOT NULL AND account_id != ''"):
+            d = acct.replace(" ", "")
+            if d in bulk_accts or (county_code(county) or "--") + d in bulk_accts:
+                hit += 1
+        exact_matched = hit
 
     props_rows = cur.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
 
