@@ -14,11 +14,21 @@ import sys
 import pandas as pd
 import streamlit as st
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-from coverage_report import compute_coverage  # noqa: E402
+try:
+    from coverage_report import compute_coverage  # noqa: E402
+except ImportError:
+    # streamlit's page runner doesn't always honor the path inserts above
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "coverage_report",
+        os.path.join(ROOT, "scripts", "coverage_report.py"))
+    _cr = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_cr)
+    compute_coverage = _cr.compute_coverage
 
 st.set_page_config(page_title="Coverage", layout="wide", page_icon="📊")
 st.title("📊 Statewide Coverage")
