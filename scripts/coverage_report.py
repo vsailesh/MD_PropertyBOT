@@ -74,12 +74,9 @@ def parse_hnum(address: str):
     return int(m.group(1)) if m else None
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--per-county", action="store_true")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args()
-
+def compute_coverage(per_county=True):
+    """Return the coverage report dict (used by the CLI and the
+    dashboard Coverage page)."""
     conn = sqlite3.connect(MAIN_DB)
     conn.execute("ATTACH DATABASE ? AS bulk", (BULK_DB,))
     cur = conn.cursor()
@@ -96,19 +93,20 @@ def main():
 
     # ---- scraped streets ---------------------------------------------
     scraped = {}
-    for street, county, status in cur.execute(
-            "SELECT street_name, county, status FROM search_progress"):
+    for street, county, status, props in cur.execute(
+            "SELECT street_name, county, status, properties_found FROM search_progress"):
         key = (norm_street(street), norm_county(county))
         if not key[0]:
             continue
-        scraped.setdefault(key, set()).add(status)
+        scraped.setdefault(key, []).append((status, props or 0))
 
+    # Covered = at least one completed scrape that RETURNED data. A
+    # completed-with-zero-results street fails against a universe built
+    # from parcels (the store says parcels exist — a zero means a WAF
+    # drain or a name-format miss, never "no properties").
     covered = {k for k in bulk_streets
-               if any(s in ("completed", "failed") for s in scraped.get(k, ()))
-               or any(s == "completed" for s in scraped.get(k, ()))}
-    # count only streets whose scrape actually COMPLETED (failed = no data)
-    covered = {k for k in bulk_streets
-               if "completed" in scraped.get(k, ())}
+               if any(s == "completed" and p > 0
+                      for s, p in scraped.get(k, ()))}
 
     # ---- property coverage: parcel-level join ------------------------
     # (county, street, hnum) from scraped addresses -> bulk parcels
@@ -144,8 +142,8 @@ def main():
     props_rows = cur.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
 
     # ---- per-county ---------------------------------------------------
-    per_county = {}
-    if args.per_county:
+    per_county_data = {}
+    if per_county:
         bulk_c = {}
         for (street, county) in bulk_streets:
             bulk_c[county] = bulk_c.get(county, 0) + 1
@@ -153,9 +151,9 @@ def main():
         for (street, county) in covered:
             cov_c[county] = cov_c.get(county, 0) + 1
         for c in sorted(bulk_c):
-            per_county[c] = {"universe": bulk_c[c],
-                             "scraped": cov_c.get(c, 0),
-                             "pct": round(100 * cov_c.get(c, 0) / bulk_c[c], 1)}
+            per_county_data[c] = {"universe": bulk_c[c],
+                                  "scraped": cov_c.get(c, 0),
+                                  "pct": round(100 * cov_c.get(c, 0) / bulk_c[c], 1)}
 
     report = {
         "streets": {
@@ -172,8 +170,21 @@ def main():
             "exact_map_parcel_keys": exact,
             "exact_account_keys": exact_acct,
         },
-        "per_county": per_county,
+        "per_county": per_county_data,
     }
+    conn.close()
+    return report
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--per-county", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    report = compute_coverage(per_county=args.per_county)
+    s, p = report["streets"], report["properties"]
+    per_county = report["per_county"]
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -184,7 +195,7 @@ def main():
         print("=" * 64)
         print(f"STREETS (with >=1 parcel, per MDP parcel store)")
         print(f"  universe:          {s['universe_parcels_streets']:,}")
-        print(f"  scraped completed: {s['scraped_completed_in_universe']:,}"
+        print(f"  scraped w/ data:   {s['scraped_completed_in_universe']:,}"
               f"  ({s['coverage_pct']}%)")
         print(f"  (input list attempted: {s['attempted_total_input_streets']:,}"
               f" — includes TIGER junk names)")
