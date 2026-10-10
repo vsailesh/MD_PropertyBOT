@@ -111,6 +111,10 @@ while true; do
     # store by account_id (no geocoding API involved, idempotent).
     ./venv/bin/python scripts/backfill_coords.py >> "$LOG" 2>&1
 
+    # Fill the remainder (parcels the store has without coords, ~1.6%)
+    # via ArcGIS — hindu rows first, bounded volume.
+    ./venv/bin/python scripts/geocode_database.py --limit 500 --workers 2 >> "$LOG" 2>&1
+
     # Refresh the dashboard's data file and bounce the service — the app
     # caches the Excel at load (st.cache_data, no TTL), so a restart is
     # the only way it sees new rows. launchd KeepAlive respawns it.
