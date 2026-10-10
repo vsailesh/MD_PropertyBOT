@@ -100,13 +100,18 @@ def compute_coverage(per_county=True):
             continue
         scraped.setdefault(key, []).append((status, props or 0))
 
-    # Covered = at least one completed scrape that RETURNED data. A
-    # completed-with-zero-results street fails against a universe built
-    # from parcels (the store says parcels exist — a zero means a WAF
-    # drain or a name-format miss, never "no properties").
-    covered = {k for k in bulk_streets
-               if any(s == "completed" and p > 0
-                      for s, p in scraped.get(k, ()))}
+    # Covered = the street actually HAS stored rows. A completed-with-
+    # data claim is not enough: Sept-era batches 15/18 counted rows that
+    # then failed insert wholesale (13.9k "phantom" streets claiming
+    # ~397k properties, e.g. OLD ADAMS/Allegany) — those are requeued as
+    # batch 194. Stored rows are the ground truth.
+    have_rows = set()
+    for street, county in cur.execute(
+            "SELECT DISTINCT street_name, county FROM properties"):
+        key = (norm_street(street), norm_county(county))
+        if key[0]:
+            have_rows.add(key)
+    covered = set(bulk_streets) & have_rows
 
     # ---- property coverage: parcel-level join ------------------------
     # (county, street, hnum) from scraped addresses -> bulk parcels
