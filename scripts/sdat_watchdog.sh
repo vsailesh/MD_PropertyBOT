@@ -111,6 +111,12 @@ while true; do
     # store by account_id (no geocoding API involved, idempotent).
     ./venv/bin/python scripts/backfill_coords.py >> "$LOG" 2>&1
 
+    # Refresh the dashboard's data file and bounce the service — the app
+    # caches the Excel at load (st.cache_data, no TTL), so a restart is
+    # the only way it sees new rows. launchd KeepAlive respawns it.
+    ./venv/bin/python scripts/export_mapped.py >> "$LOG" 2>&1 \
+        && pkill -f "dashboard/app.py" 2>/dev/null
+
     PENDING=$(sqlite3 data/property_search.db "
         SELECT COUNT(*) FROM search_progress sp
         JOIN batches b ON sp.batch_id = b.id
