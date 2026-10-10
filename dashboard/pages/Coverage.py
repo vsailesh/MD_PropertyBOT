@@ -57,8 +57,8 @@ m2.metric("Parcels w/ owner", f"{p['addr_join_coverage_pct']}%",
           f"{p['parcels_with_owner_via_addr_join']:,} / {p['universe_parcels']:,}")
 m3.metric("Owner records", f"{p['scraped_rows']:,}",
           "distinct county/owner/address rows")
-m4.metric("Exact parcel keys", f"{p['exact_map_parcel_keys']:,}",
-          "map_parcel backfilling via rotation")
+m4.metric("Parcels w/ owner (exact)", f"{p['exact_account_coverage_pct'] or 0}%",
+          f"{p['exact_account_matched'] or 0:,} / {p['universe_parcels']:,} via account_id")
 
 st.divider()
 

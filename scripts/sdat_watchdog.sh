@@ -107,6 +107,10 @@ while true; do
     sleep 2
     FIRST=0
 
+    # Whatever drained this pass, join coords/city/zip from the parcel
+    # store by account_id (no geocoding API involved, idempotent).
+    ./venv/bin/python scripts/backfill_coords.py >> "$LOG" 2>&1
+
     PENDING=$(sqlite3 data/property_search.db "
         SELECT COUNT(*) FROM search_progress sp
         JOIN batches b ON sp.batch_id = b.id

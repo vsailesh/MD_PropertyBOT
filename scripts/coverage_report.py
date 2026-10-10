@@ -131,13 +131,23 @@ def compute_coverage(per_county=True):
     scr_keys = {(c, s, h) for c, s, h in rows}
     matched_parcels = sum(n for k, n in parcel_keys.items() if k in scr_keys)
 
-    # exact parcel join once map_parcel backfills (browser engine rows)
+    # exact parcel coverage once browser-engine rows carry account_id
+    # (verified 298/300 exact match against the parcel store)
     exact = cur.execute(
         "SELECT COUNT(DISTINCT map_parcel) FROM properties "
         "WHERE map_parcel IS NOT NULL AND map_parcel != ''").fetchone()[0]
     exact_acct = cur.execute(
         "SELECT COUNT(DISTINCT account_id) FROM properties "
         "WHERE account_id IS NOT NULL AND account_id != ''").fetchone()[0]
+    exact_matched = None
+    if exact_acct:
+        bulk_accts = {r[0] for r in cur.execute(
+            "SELECT DISTINCT account_id FROM bulk.parcels "
+            "WHERE account_id IS NOT NULL AND account_id != ''")}
+        scr_accts = {r[0].replace(" ", "") for r in cur.execute(
+            "SELECT DISTINCT account_id FROM properties "
+            "WHERE account_id IS NOT NULL AND account_id != ''")}
+        exact_matched = len(scr_accts & bulk_accts)
 
     props_rows = cur.execute("SELECT COUNT(*) FROM properties").fetchone()[0]
 
@@ -169,6 +179,9 @@ def compute_coverage(per_county=True):
             "addr_join_coverage_pct": round(100 * matched_parcels / bulk_parcels, 1),
             "exact_map_parcel_keys": exact,
             "exact_account_keys": exact_acct,
+            "exact_account_matched": exact_matched,
+            "exact_account_coverage_pct": (round(100 * exact_matched / bulk_parcels, 1)
+                                           if exact_matched is not None else None),
         },
         "per_county": per_county_data,
     }
@@ -204,6 +217,9 @@ def main():
         print(f"  scraped rows:      {p['scraped_rows']:,}")
         print(f"  parcels w/ owner (addr join): {p['parcels_with_owner_via_addr_join']:,}"
               f"  ({p['addr_join_coverage_pct']}%)")
+        if p.get("exact_account_matched") is not None:
+            print(f"  parcels w/ owner (exact acct): {p['exact_account_matched']:,}"
+                  f"  ({p['exact_account_coverage_pct']}%)")
         print(f"  exact parcel keys (map_parcel): {p['exact_map_parcel_keys']:,}"
               f" (backfilling via rotation)")
         if per_county:
