@@ -79,6 +79,12 @@ def name_variants(street: str):
         out.append(base.replace("ST ", "SAINT ", 1))
     elif base.startswith("SAINT "):
         out.append(base.replace("SAINT ", "ST ", 1))
+    else:
+        # SDAT registers many streets WITH the prefix ("ST GEORGES PARK")
+        # while the queue name carries it stripped ("GEORGES PARK"); the
+        # wizard search is begins-with, so the unprefixed form zeroes.
+        out.append("ST " + base)
+        out.append("SAINT " + base)
     if "BALTIMORE" in base:
         out.append(base.replace("BALTIMORE", "BALTO"))
     if "NATIONAL" in base:
