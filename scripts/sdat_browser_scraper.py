@@ -527,6 +527,7 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
     done = 0
     with CDPBrowser() as b:
         print(f"landed: {b.goto_sdat()!r}")
+        _street_t0 = time.monotonic()
         while (limit is None or done < limit):
             task = db.get_next_pending_street(batch_id)
             if not task:
@@ -569,7 +570,17 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                         break
                     time.sleep(2)
                 if not grid:
-                    print("    (grid never rendered)")
+                    # "Search Result for" page with NO results table and no
+                    # "no records" banner = rate suppression (verified
+                    # 2026-10-11: 466 streets served this mid-night while
+                    # interleaved successes kept coming, and every one had
+                    # parcels per the store). Recording a zero here poisons
+                    # coverage — abort the pass; the watchdog backs off and
+                    # the street stays pending for a later attempt.
+                    print(f"BLOCKED: results page without grid after {done} "
+                          f"streets ({street!r}/{county}) — suspected rate "
+                          f"suppression")
+                    return 2
                 elif not grid.get('rows'):
                     print(f"    (grid but no rows: id={grid.get('id')!r})")
                 if grid:
@@ -629,8 +640,17 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
             done += 1
             print(f"  [{done}] {street} / {county}: {len(records)} properties"
                   + ("  (no grid)" if not ok else ""))
-            # human-ish pacing between streets
-            time.sleep(3 + (os.urandom(1)[0] / 255) * 5)
+            # human-ish pacing, rate-capped: the 2026-10-11 night hit ~65%
+            # no-grid suppression when quick junk streets pushed the rate
+            # to ~4.8/min; the 2026-10-10 pace (~2/min) never triggered it.
+            # Hold the per-street interval near 30s: fast streets sleep it
+            # off, slow multi-page streets owe nothing.
+            _now = time.monotonic()
+            _spent = _now - _street_t0 if _street_t0 else 0.0
+            _owed = 27 - _spent + (os.urandom(1)[0] / 255) * 6
+            if _owed > 0:
+                time.sleep(_owed)
+            _street_t0 = time.monotonic()
 
     prog = db.get_search_progress(batch_id)
     remaining = prog['pending'] + prog['in_progress']
