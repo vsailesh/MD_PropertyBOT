@@ -92,6 +92,43 @@ def name_variants(street: str):
     return list(dict.fromkeys(v for v in out if v and v != "UNKNOWN"))
 
 
+def bulk_aliases(street: str, county: str):
+    """Registered spellings from the parcel store that EXTEND the queue
+    name — the TIGER-derived queue truncates at 15 chars ("NEW MARKET
+    ELLWOO" vs SDAT's "NEW MARKET ELLWOOD"), and the wizard search is
+    begins-with, so the truncated form zeroes. Only called after the base
+    form AND the static variants all returned nothing; any failure just
+    yields no aliases (the street completes as a normal zero)."""
+    import sqlite3
+    base = " ".join(str(street).upper().split())
+    # single-token names only extend to DIFFERENT streets (MAIN -> MAINE)
+    # — the 15-char TIGER truncation only bites multi-token names
+    if not base or base == "UNKNOWN" or " " not in base:
+        return []
+    c = (str(county) or "").upper().strip()
+    if c.endswith(" COUNTY"):  # keep " CITY" — bulk distinguishes Baltimore vs Baltimore City
+        c = c[: -len(" COUNTY")]
+    bulk = os.path.join(ROOT, "data", "md_bulk.db")
+    if not os.path.exists(bulk):
+        return []
+    try:
+        conn = sqlite3.connect(f"file:{bulk}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT street FROM parcels WHERE county=? AND street LIKE ?",
+                (c, base + "%")).fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return []
+    # longest extensions first — the most specific name wins; drop the
+    # queue form itself and anything already tried by name_variants
+    tried = set(name_variants(street))
+    out = [r[0].upper() for r in rows if r[0] and r[0].upper() not in tried]
+    out.sort(key=len, reverse=True)
+    return out[:3]  # cap the walk — 3 searches max past the base form
+
+
 def county_id(county: str) -> str:
     """Normalize a county name to its SDAT dropdown value."""
     c = (county or "").upper().strip()
@@ -507,6 +544,14 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                     if b.search_street(variant, cid):
                         ok = True
                         break
+                if not ok:
+                    # last resort: longer registered spellings from the
+                    # parcel store (truncated TIGER queue names)
+                    for variant in bulk_aliases(street, county):
+                        print(f"    (alias: {street!r} -> {variant!r})")
+                        if b.search_street(variant, cid):
+                            ok = True
+                            break
             except BrowserBlockedError as e:
                 print(f"BLOCKED mid-run after {done} streets: {e}")
                 return 2
