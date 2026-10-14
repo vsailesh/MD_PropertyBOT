@@ -148,7 +148,19 @@ while true; do
         echo "$(date '+%F %T') blocked or interrupted — $PENDING streets pending, retry $(( WAIT / 60 )) min (no-progress streak $STREAK)" >> "$LOG"
         sleep "$WAIT"
     else
-        echo "$(date '+%F %T') no pending streets — watchdog done" >> "$LOG"
-        break
+        # Queue drained. Under the launchd KeepAlive agent this process is
+        # the eternal queue owner — exiting would respawn-loop. Sleep until
+        # the next night window instead (rotation-created batches get
+        # picked up there).
+        if [ -z "$SDAT_ANYTIME" ]; then
+            TO_WIN=$(secs_to_window)
+            if [ "$TO_WIN" -eq 0 ]; then
+                TO_WIN=$(( (1440 - WIN_END + WIN_START) * 60 ))
+            fi
+        else
+            TO_WIN=3600
+        fi
+        echo "$(date '+%F %T') no pending streets — idle, waking in $(( TO_WIN / 60 )) min" >> "$LOG"
+        sleep "$TO_WIN"
     fi
 done
