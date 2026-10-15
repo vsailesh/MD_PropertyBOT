@@ -643,11 +643,12 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
             # human-ish pacing, rate-capped: the 2026-10-11 night hit ~65%
             # no-grid suppression when quick junk streets pushed the rate
             # to ~4.8/min; the 2026-10-10 pace (~2/min) never triggered it.
-            # Hold the per-street interval near 30s: fast streets sleep it
-            # off, slow multi-page streets owe nothing.
+            # 2026-10-15: zero blocks at a 30s interval — probing 25s
+            # (+20% throughput). Fail-closed no-grid abort makes this safe
+            # to experiment with: worst case is a pass abort + backoff.
             _now = time.monotonic()
             _spent = _now - _street_t0 if _street_t0 else 0.0
-            _owed = 27 - _spent + (os.urandom(1)[0] / 255) * 6
+            _owed = 22 - _spent + (os.urandom(1)[0] / 255) * 6
             if _owed > 0:
                 time.sleep(_owed)
             _street_t0 = time.monotonic()
