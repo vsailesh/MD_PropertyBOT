@@ -1056,6 +1056,11 @@ class RaceEthnicityPredictor:
         self.sikh_names = set(self.name_dict.get('sikh_names', []))
         self.muslim_names = set(self.name_dict.get('muslim_names', []))
         self.christian_names = set(self.name_dict.get('christian_names', []))
+        # v2 position-aware sets (built by scripts/build_hindu_dict_v2.py):
+        # ambiguous surnames need a distinctive given corroborator; a
+        # distinctive given alone rescues dict-missing surnames.
+        self.ambiguous_last = set(self.name_dict.get('ambiguous_last_names', []))
+        self.distinctive_first = set(self.name_dict.get('distinctive_first_names', []))
 
         # Basic expanded patterns for general race assignment
         self.expanded_patterns = {
@@ -1104,33 +1109,81 @@ class RaceEthnicityPredictor:
         name = re.sub(r'[^A-Z\s,-]', '', name)
         return re.sub(r'\s+', ' ', name).strip()
 
-    def _is_hindu_name(self, all_parts: List[str]) -> Dict:
+    def _owner_segments(self, full_name: str) -> List[List[str]]:
         """
-        Check if any part of the name is a known Hindu/Sikh first/last name,
-        while strictly disqualifying if any Muslim or Christian markers are present.
+        Split a raw SDAT owner string into owner segments (token lists).
+
+        SDAT format is SURNAME FIRST MIDDLE (surname first); co-owners are
+        joined by & / AND. The surname of each segment is its FIRST token.
+        """
+        import re as _re
+        segs = []
+        for seg in _re.split(r'\b(?:&|AND)\b', full_name.upper()):
+            toks = [t for t in _re.sub(r'[^A-Z\s]', ' ', seg).split()
+                    if len(t) > 1 and t.isalpha()]
+            if toks:
+                segs.append(toks)
+        return segs
+
+    def _is_hindu_name(self, all_parts: List[str], segments: List[List[str]] = None) -> Dict:
+        """
+        Position-aware Hindu/Sikh detection.
+
+        v1 matched ANY token, so `MURPHY JAY A` / `TURNER DOUGLAS RAY`
+        flagged as hindu (~50% false positives, measured 2026-10-16).
+        v2 rules, per owner segment (SDAT surname = first token):
+          1. Muslim/Christian token anywhere -> disqualified (unchanged)
+          2. Surname-position hit (unambiguous) -> hindu
+          3. Ambiguous surname (also common English: RAY, PAUL...) -> hindu
+             only with a distinctive Indian given in the same name
+          4. No surname hit but a distinctive given (PIYUSH, ANIL...) ->
+             hindu — rescues dict-missing surnames like GULLAPALLI
+          Weak given tokens alone (JAY, ANITA, DEEP...) never flag.
         """
         is_hindu = False
         is_indian = False
         category = 'Unknown'
-        
-        # 1. Check for disqualifiers first
-        for part in all_parts:
-            if part in self.muslim_names:
-                return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
-            if part in self.christian_names:
-                return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
 
-        # 2. Check for Hindu/Sikh markers (First or Last name)
-        for part in all_parts:
-            if part in self.hindu_first or part in self.hindu_last or part in self.sikh_names:
+        if segments is None:
+            # Legacy flat call: degrade to surname = first token overall
+            segments = [all_parts] if all_parts else []
+
+        surname_pool = self.hindu_last | self.sikh_names | self.hindu_first
+        for seg in segments:
+            sur = seg[0]
+            givens = seg[1:]
+            # 1. A muslim/christian SURNAME disqualifies that owner's
+            # segment only — a western co-owner's JOHN shouldn't kill
+            # `SMITH JOHN & SHARMA PRIYA`.
+            if sur in self.muslim_names or sur in self.christian_names:
+                continue
+            if sur in self.ambiguous_last:
+                # 3. homograph surname needs corroboration anywhere in the name
+                if any(t in self.distinctive_first for s in segments for t in s[1:]):
+                    is_hindu = True
+            elif sur in surname_pool:
+                # 2. clean surname hit
                 is_hindu = True
+            if not is_hindu and any(t in self.distinctive_first for t in givens):
+                # 4. distinctive given rescues dict-missing surname
+                is_hindu = True
+            if is_hindu:
                 is_indian = True
                 category = 'Hindu/Sikh'
                 break
-                
+
+        if not is_hindu:
+            # Fallback categorization (v1 semantics): any-position
+            # muslim/christian token labels the name Indian-Muslim/-Christian
+            for part in all_parts:
+                if part in self.muslim_names:
+                    return {'is_indian': True, 'is_hindu': False, 'category': 'Muslim'}
+                if part in self.christian_names:
+                    return {'is_indian': True, 'is_hindu': False, 'category': 'Christian'}
+
         return {
-            'is_indian': is_indian, 
-            'is_hindu': is_hindu, 
+            'is_indian': is_indian,
+            'is_hindu': is_hindu,
             'category': category
         }
 
@@ -1155,9 +1208,10 @@ class RaceEthnicityPredictor:
             surname = parts[0]
             firstname = parts[1] if len(parts) > 1 else ''
 
-        # BRUTAL ACCURACY: Check ALL parts of the name using new comprehensive dictionary
+        # BRUTAL ACCURACY: position-aware check — surname is the first token
+        # of each owner segment (v2; see _is_hindu_name)
         all_parts = cleaned_name.replace(',', ' ').split()
-        local_check = self._is_hindu_name(all_parts)
+        local_check = self._is_hindu_name(all_parts, self._owner_segments(full_name))
         is_hindu = local_check['is_hindu']
         
         if getattr(self, 'is_business_entity', False):

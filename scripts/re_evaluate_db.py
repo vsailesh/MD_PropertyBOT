@@ -44,21 +44,19 @@ def re_evaluate():
         
         # If the local dict explicitly finds a match (True) OR explicitly kills a false positive
         if new_is_hindu != old_is_hindu:
-            # Check if this new result is actually a strong signal from the dict logic
-            if res['method'] == 'Local Dictionary':
-                if new_is_hindu == 1:
-                    new_hindus += 1
-                else:
-                    removed_hindus += 1
-                    
-                updates.append((
-                    res['predicted_race'],
-                    res['confidence'],
-                    res['method'],
-                    new_is_hindu,
-                    res.get('sub_category', ''),
-                    row_id
-                ))
+            if new_is_hindu == 1:
+                new_hindus += 1
+            else:
+                removed_hindus += 1
+
+            updates.append((
+                res['predicted_race'],
+                res['confidence'],
+                res['method'],
+                new_is_hindu,
+                res.get('sub_category', ''),
+                row_id
+            ))
             
         if (i+1) % 100000 == 0:
             print(f"Processed {i+1}/{len(rows)}... Found {new_hindus} new Muslims/Christians removed, added {new_hindus} new Sikhs/Hindus.")
