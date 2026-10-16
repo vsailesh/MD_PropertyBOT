@@ -129,6 +129,27 @@ def bulk_aliases(street: str, county: str):
     return out[:3]  # cap the walk — 3 searches max past the base form
 
 
+# TIGER-name abbreviations vs SDAT's registered spellings — used by the
+# straggler sweep to match wide prefix-search rows back to the queue name
+_ABBR = {
+    "CM": "COMMON", "SOU": "SOUTH", "NOR": "NORTH", "EAS": "EAST",
+    "WES": "WEST", "MTN": "MOUNTAIN", "VIL": "VILLAGE", "GRN": "GREEN",
+    "MED": "MEADOWS", "CRT": "COURT", "HTS": "HEIGHTS", "HLS": "HILLS",
+    "VLY": "VALLEY", "RDG": "RIDGE", "PK": "PARK", "SQ": "SQUARE",
+}
+
+
+def canon_street(name: str):
+    """Canonical form for matching an SDAT grid street back to a mangled
+    queue name: uppercase, expand abbreviations, drop a leading house
+    number. Token-prefix equality (checked by the caller) tolerates
+    suffixes the two sources spell differently."""
+    import re as _re
+    s = " ".join(str(name or "").upper().split())
+    s = _re.sub(r"^(\d+[A-Z]?)\s+", "", s)
+    return " ".join(_ABBR.get(t, t) for t in s.split())
+
+
 def county_id(county: str) -> str:
     """Normalize a county name to its SDAT dropdown value."""
     c = (county or "").upper().strip()
@@ -523,6 +544,17 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
     prog = db.get_search_progress(batch_id)
     print(f"batch {batch_id}: {prog['pending']} pending / {prog['in_progress']} in_progress")
 
+    # Straggler sweep batches (name contains "Straggler") additionally
+    # drop the mangled last token and search the prefix — SDAT's search
+    # is begins-with, so "AUTUMN CREST" reaches "AUTUMN CREST SOUTH".
+    # Rows are canonically filtered back to the queue name so a wide
+    # prefix never attributes another street's parcels to us.
+    bname = next((b.get('batch_name') or '' for b in db.get_all_batches()
+                  if b['id'] == batch_id), '')
+    straggler = 'STRAGGLER' in bname.upper()
+    if straggler:
+        print(f"straggler sweep mode (batch {batch_id}: {bname})")
+
     db.reset_in_progress_streets(batch_id)
     done = 0
     with CDPBrowser() as b:
@@ -541,6 +573,7 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                 # try the base spelling, then the proven variants — only
                 # walked when the previous form returned nothing
                 ok = False
+                used_prefix = False
                 for variant in name_variants(street):
                     if b.search_street(variant, cid):
                         ok = True
@@ -553,6 +586,14 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                         if b.search_street(variant, cid):
                             ok = True
                             break
+                if not ok and straggler:
+                    toks = " ".join(str(street).upper().split()).split()
+                    if len(toks) > 1:
+                        prefix = " ".join(toks[:-1])
+                        print(f"    (prefix: {street!r} -> {prefix!r})")
+                        if b.search_street(prefix, cid):
+                            ok = True
+                            used_prefix = True
             except BrowserBlockedError as e:
                 print(f"BLOCKED mid-run after {done} streets: {e}")
                 return 2
@@ -620,6 +661,20 @@ def run(limit=None, replace=False, input_path=None, force=False, name=None):
                         page += 1
                         if page > 500:
                             break
+
+            if used_prefix and records:
+                # wide prefix search: keep only rows whose SDAT street
+                # canonically matches the queue name (abbreviation-aware,
+                # token-prefix tolerant) so "DEER" never swallows DEERFIELD
+                want = canon_street(street)
+                kept = []
+                for r in records:
+                    got = canon_street(r['address'])
+                    if (got == want or got.startswith(want + " ")
+                            or want.startswith(got + " ")):
+                        kept.append(r)
+                print(f"    (canonical filter: {len(records)} -> {len(kept)} rows for {want!r})")
+                records = kept
 
             # race prediction per owner
             for rec in records:
