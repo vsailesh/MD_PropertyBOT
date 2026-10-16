@@ -1157,6 +1157,12 @@ class RaceEthnicityPredictor:
             # `SMITH JOHN & SHARMA PRIYA`.
             if sur in self.muslim_names or sur in self.christian_names:
                 continue
+            # 1b. A muslim GIVEN with a hindu surname means a Muslim
+            # family carrying a south-asian surname (`CHAUDHRY MOHAMMAD`)
+            # — unless the token is also a hindu given (`GROVER SAMIR`).
+            if any(t in self.muslim_names and t not in self.hindu_first
+                   for t in givens):
+                continue
             if sur in self.ambiguous_last:
                 # 3. homograph surname needs corroboration anywhere in the name
                 if any(t in self.distinctive_first for s in segments for t in s[1:]):
