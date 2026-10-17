@@ -1,0 +1,526 @@
+{
+ "probed": "2026-10-17",
+ "source": "countytaxrates.com (BIS/TNT)",
+ "counties": [
+  {
+   "county": "collin",
+   "patel_probe": 1421
+  },
+  {
+   "county": "denton",
+   "patel_probe": 847
+  },
+  {
+   "county": "williamson",
+   "patel_probe": 735
+  },
+  {
+   "county": "bexar",
+   "patel_probe": 477
+  },
+  {
+   "county": "galveston",
+   "patel_probe": 208
+  },
+  {
+   "county": "brazoria",
+   "patel_probe": 187
+  },
+  {
+   "county": "liberty",
+   "patel_probe": 148
+  },
+  {
+   "county": "hays",
+   "patel_probe": 126
+  },
+  {
+   "county": "angelina",
+   "patel_probe": 124
+  },
+  {
+   "county": "lubbock",
+   "patel_probe": 112
+  },
+  {
+   "county": "bell",
+   "patel_probe": 96
+  },
+  {
+   "county": "howard",
+   "patel_probe": 88
+  },
+  {
+   "county": "nueces",
+   "patel_probe": 87
+  },
+  {
+   "county": "comal",
+   "patel_probe": 87
+  },
+  {
+   "county": "grayson",
+   "patel_probe": 63
+  },
+  {
+   "county": "guadalupe",
+   "patel_probe": 59
+  },
+  {
+   "county": "wichita",
+   "patel_probe": 55
+  },
+  {
+   "county": "brazos",
+   "patel_probe": 55
+  },
+  {
+   "county": "aransas",
+   "patel_probe": 53
+  },
+  {
+   "county": "jefferson",
+   "patel_probe": 52
+  },
+  {
+   "county": "gregg",
+   "patel_probe": 45
+  },
+  {
+   "county": "taylor",
+   "patel_probe": 39
+  },
+  {
+   "county": "hudspeth",
+   "patel_probe": 39
+  },
+  {
+   "county": "brewster",
+   "patel_probe": 34
+  },
+  {
+   "county": "victoria",
+   "patel_probe": 31
+  },
+  {
+   "county": "burnet",
+   "patel_probe": 25
+  },
+  {
+   "county": "waller",
+   "patel_probe": 24
+  },
+  {
+   "county": "upshur",
+   "patel_probe": 22
+  },
+  {
+   "county": "bastrop",
+   "patel_probe": 19
+  },
+  {
+   "county": "polk",
+   "patel_probe": 16
+  },
+  {
+   "county": "nacogdoches",
+   "patel_probe": 15
+  },
+  {
+   "county": "fayette",
+   "patel_probe": 14
+  },
+  {
+   "county": "kendall",
+   "patel_probe": 13
+  },
+  {
+   "county": "walker",
+   "patel_probe": 12
+  },
+  {
+   "county": "matagorda",
+   "patel_probe": 12
+  },
+  {
+   "county": "henderson",
+   "patel_probe": 12
+  },
+  {
+   "county": "anderson",
+   "patel_probe": 12
+  },
+  {
+   "county": "wise",
+   "patel_probe": 11
+  },
+  {
+   "county": "wood",
+   "patel_probe": 10
+  },
+  {
+   "county": "lampasas",
+   "patel_probe": 10
+  },
+  {
+   "county": "orange",
+   "patel_probe": 9
+  },
+  {
+   "county": "medina",
+   "patel_probe": 9
+  },
+  {
+   "county": "kleberg",
+   "patel_probe": 9
+  },
+  {
+   "county": "hill",
+   "patel_probe": 9
+  },
+  {
+   "county": "wilson",
+   "patel_probe": 8
+  },
+  {
+   "county": "kerr",
+   "patel_probe": 8
+  },
+  {
+   "county": "coryell",
+   "patel_probe": 8
+  },
+  {
+   "county": "bee",
+   "patel_probe": 8
+  },
+  {
+   "county": "hardin",
+   "patel_probe": 7
+  },
+  {
+   "county": "gillespie",
+   "patel_probe": 7
+  },
+  {
+   "county": "terry",
+   "patel_probe": 6
+  },
+  {
+   "county": "gray",
+   "patel_probe": 6
+  },
+  {
+   "county": "dimmit",
+   "patel_probe": 6
+  },
+  {
+   "county": "caldwell",
+   "patel_probe": 6
+  },
+  {
+   "county": "zavala",
+   "patel_probe": 5
+  },
+  {
+   "county": "young",
+   "patel_probe": 5
+  },
+  {
+   "county": "titus",
+   "patel_probe": 5
+  },
+  {
+   "county": "milam",
+   "patel_probe": 5
+  },
+  {
+   "county": "lamar",
+   "patel_probe": 5
+  },
+  {
+   "county": "garza",
+   "patel_probe": 5
+  },
+  {
+   "county": "cass",
+   "patel_probe": 5
+  },
+  {
+   "county": "washington",
+   "patel_probe": 4
+  },
+  {
+   "county": "tyler",
+   "patel_probe": 4
+  },
+  {
+   "county": "delta",
+   "patel_probe": 4
+  },
+  {
+   "county": "comanche",
+   "patel_probe": 4
+  },
+  {
+   "county": "colorado",
+   "patel_probe": 4
+  },
+  {
+   "county": "scurry",
+   "patel_probe": 3
+  },
+  {
+   "county": "presidio",
+   "patel_probe": 3
+  },
+  {
+   "county": "moore",
+   "patel_probe": 3
+  },
+  {
+   "county": "llano",
+   "patel_probe": 3
+  },
+  {
+   "county": "jackson",
+   "patel_probe": 3
+  },
+  {
+   "county": "hale",
+   "patel_probe": 3
+  },
+  {
+   "county": "blanco",
+   "patel_probe": 3
+  },
+  {
+   "county": "bailey",
+   "patel_probe": 3
+  },
+  {
+   "county": "willacy",
+   "patel_probe": 2
+  },
+  {
+   "county": "wharton",
+   "patel_probe": 2
+  },
+  {
+   "county": "uvalde",
+   "patel_probe": 2
+  },
+  {
+   "county": "rains",
+   "patel_probe": 2
+  },
+  {
+   "county": "mitchell",
+   "patel_probe": 2
+  },
+  {
+   "county": "mills",
+   "patel_probe": 2
+  },
+  {
+   "county": "madison",
+   "patel_probe": 2
+  },
+  {
+   "county": "lee",
+   "patel_probe": 2
+  },
+  {
+   "county": "falls",
+   "patel_probe": 2
+  },
+  {
+   "county": "cherokee",
+   "patel_probe": 2
+  },
+  {
+   "county": "calhoun",
+   "patel_probe": 2
+  },
+  {
+   "county": "brown",
+   "patel_probe": 2
+  },
+  {
+   "county": "trinity",
+   "patel_probe": 1
+  },
+  {
+   "county": "ochiltree",
+   "patel_probe": 1
+  },
+  {
+   "county": "montague",
+   "patel_probe": 1
+  },
+  {
+   "county": "lavaca",
+   "patel_probe": 1
+  },
+  {
+   "county": "gaines",
+   "patel_probe": 1
+  },
+  {
+   "county": "deafsmith",
+   "patel_probe": 1
+  },
+  {
+   "county": "dallam",
+   "patel_probe": 1
+  },
+  {
+   "county": "cochran",
+   "patel_probe": 1
+  },
+  {
+   "county": "carson",
+   "patel_probe": 1
+  },
+  {
+   "county": "bandera",
+   "patel_probe": 1
+  },
+  {
+   "county": "atascosa",
+   "patel_probe": 1
+  },
+  {
+   "county": "zapata",
+   "patel_probe": 0
+  },
+  {
+   "county": "yoakum",
+   "patel_probe": 0
+  },
+  {
+   "county": "wilbarger",
+   "patel_probe": 0
+  },
+  {
+   "county": "terrell",
+   "patel_probe": 0
+  },
+  {
+   "county": "swisher",
+   "patel_probe": 0
+  },
+  {
+   "county": "sutton",
+   "patel_probe": 0
+  },
+  {
+   "county": "starr",
+   "patel_probe": 0
+  },
+  {
+   "county": "shelby",
+   "patel_probe": 0
+  },
+  {
+   "county": "shackelford",
+   "patel_probe": 0
+  },
+  {
+   "county": "schleicher",
+   "patel_probe": 0
+  },
+  {
+   "county": "real",
+   "patel_probe": 0
+  },
+  {
+   "county": "parmer",
+   "patel_probe": 0
+  },
+  {
+   "county": "oldham",
+   "patel_probe": 0
+  },
+  {
+   "county": "newton",
+   "patel_probe": 0
+  },
+  {
+   "county": "mcmullen",
+   "patel_probe": 0
+  },
+  {
+   "county": "mason",
+   "patel_probe": 0
+  },
+  {
+   "county": "lamb",
+   "patel_probe": 0
+  },
+  {
+   "county": "kinney",
+   "patel_probe": 0
+  },
+  {
+   "county": "kimble",
+   "patel_probe": 0
+  },
+  {
+   "county": "kenedy",
+   "patel_probe": 0
+  },
+  {
+   "county": "hockley",
+   "patel_probe": 0
+  },
+  {
+   "county": "hartley",
+   "patel_probe": 0
+  },
+  {
+   "county": "edwards",
+   "patel_probe": 0
+  },
+  {
+   "county": "duval",
+   "patel_probe": 0
+  },
+  {
+   "county": "concho",
+   "patel_probe": 0
+  },
+  {
+   "county": "coke",
+   "patel_probe": 0
+  },
+  {
+   "county": "castro",
+   "patel_probe": 0
+  },
+  {
+   "county": "camp",
+   "patel_probe": 0
+  },
+  {
+   "county": "callahan",
+   "patel_probe": 0
+  },
+  {
+   "county": "burleson",
+   "patel_probe": 0
+  },
+  {
+   "county": "brooks",
+   "patel_probe": 0
+  },
+  {
+   "county": "bosque",
+   "patel_probe": 0
+  },
+  {
+   "county": "borden",
+   "patel_probe": 0
+  }
+ ]
+}
