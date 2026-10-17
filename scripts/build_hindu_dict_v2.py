@@ -158,6 +158,9 @@ def main():
     d["business_markers"] = sorted(set(d.get("business_markers", [])) | {
         "HOUSING", "APARTMENTS", "RENTALS", "HOMES", "COMPANY", "COMPANIES",
         "ENTERPRISES", "VENTURES", "GROUP", "BUILDERS", "DEVELOPMENT",
+        # TX junk: "NUNE TRANSPORT" — owner strings carry trade names
+        "TRANSPORT", "LOGISTICS", "TRUCKING", "DAIRY", "FARMS", "NURSERY",
+        "MOTEL", "HOTEL", "STORE", "SHOP", "GROCERY", "GAS",
     })
     # muslim spelling variants the v1 dict missed (found in TX data:
     # "PATEL MUHAMMAD" wrongly hindu-flagged). Builder owns them now so a

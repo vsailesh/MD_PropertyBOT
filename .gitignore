@@ -11,6 +11,7 @@ data/*.xlsx
 !data/MD_street Names.xlsx
 !data/Hindu_Origin_Owners.xlsx
 !data/Hindu_Origin_Owners_Mapped.xlsx
+!data/TX_Hindu_Owners.xlsx
 
 # IDEs
 .vscode/
