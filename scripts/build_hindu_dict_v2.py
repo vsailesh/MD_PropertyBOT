@@ -159,6 +159,13 @@ def main():
         "HOUSING", "APARTMENTS", "RENTALS", "HOMES", "COMPANY", "COMPANIES",
         "ENTERPRISES", "VENTURES", "GROUP", "BUILDERS", "DEVELOPMENT",
     })
+    # muslim spelling variants the v1 dict missed (found in TX data:
+    # "PATEL MUHAMMAD" wrongly hindu-flagged). Builder owns them now so a
+    # rebuild doesn't regress.
+    d["muslim_names"] = sorted(set(d.get("muslim_names", [])) | {
+        "MUHAMMAD", "MOHAMED", "MUHAMMED", "MOHAMUD", "MAHMOUD", "MAHMUD",
+        "MOHAMMADU", "MUHAMMADU",
+    })
 
     # --- DB-derived: given-token corroboration with the EXPANDED surname set
     sur = new_last | set(d["sikh_names"]) | (v1_first - ambiguous)

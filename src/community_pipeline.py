@@ -1206,7 +1206,10 @@ class RaceEthnicityPredictor:
 
         if ',' in cleaned_name:
             surname = cleaned_name.split(',')[0].strip()
-            firstname = cleaned_name.split(',')[1].strip().split()[0] if len(cleaned_name.split(',')) > 1 else ''
+            # TX source carries trailing/empty comma segments ("PATEL DIPAK,")
+            # — .split() may be empty; fall back to ''
+            rest = cleaned_name.split(',')[1].strip().split()
+            firstname = rest[0] if rest else ''
         else:
             parts = cleaned_name.split()
             if not parts:
