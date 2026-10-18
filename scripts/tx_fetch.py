@@ -35,7 +35,7 @@ import sqlite3
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
@@ -101,9 +101,16 @@ def county_api(county):
 
 
 def fetch_query(api, query, session):
-    """Walk all pages for one surname. Returns (rows, pages, count)."""
-    rows, page, total = [], 1, 0
+    """Walk all pages for one surname. Returns (rows, pages, count).
+
+    Per-page retry cap: a county API that's hard-down (5xx storm, like
+    dallas's broken Lucene index) would otherwise retry the same page
+    forever and wedge the whole run.
+    """
+    rows, page, total, retries = [], 1, 0, 0
     while page <= MAX_PAGES:
+        if retries > 4:
+            break  # give up this surname-county; log keeps count so far
         try:
             r = session.get(api + "PropertyDetails",
                             params={"limit": PAGE_LIMIT, "page": page,
@@ -112,18 +119,22 @@ def fetch_query(api, query, session):
                                     "streetNumber": "", "streetName": ""},
                             timeout=25)
         except requests.RequestException:
+            retries += 1
             time.sleep(3)
             continue  # retry same page
         if r.status_code == 400:
             break  # past last page
         if r.status_code != 200:
+            retries += 1
             time.sleep(3)
             continue
         try:
             d = r.json()
         except ValueError:
+            retries += 1
             time.sleep(3)
             continue
+        retries = 0
         batch = d.get("propertyDetails") or []
         if not batch:
             break
@@ -142,6 +153,9 @@ def main():
     ap.add_argument("--only", nargs="*", help="restrict surnames (debug)")
     ap.add_argument("--refresh", action="store_true",
                     help="re-query even if fetch log has the (county, query)")
+    ap.add_argument("--since-hours", type=float, default=None,
+                    help="with --refresh: still skip (county, query) pairs "
+                         "logged within the last N hours — resumable refresh")
     ap.add_argument("--threads", type=int, default=4)
     args = ap.parse_args()
 
@@ -169,6 +183,13 @@ def main():
             "SELECT county || '|' || query FROM tx_fetch_log"))
 
     skip = set() if args.refresh else done_pairs()
+    if args.refresh and args.since_hours is not None:
+        # resumable refresh: pairs logged recently are fresh enough
+        cutoff = (datetime.now() - timedelta(hours=args.since_hours)).isoformat(
+            timespec="seconds")
+        skip = {p for (p,) in con.execute(
+            "SELECT county || '|' || query FROM tx_fetch_log WHERE fetched_at >= ?",
+            (cutoff,))}
 
     for county in counties:
         try:
