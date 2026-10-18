@@ -39,8 +39,11 @@ st.markdown("""
 
 # ------------------------------------------------------------ state picker
 # Each state keeps its own db schema + export format (MD: SDAT, TX:
-# countytaxrates.com); only the dashboard view is shared.
-STATE = st.sidebar.radio("State", ["Maryland", "Texas"], horizontal=True)
+# countytaxrates.com); only the dashboard view is shared. "All" concats
+# both frames — county names that exist in BOTH states (HOWARD,
+# WASHINGTON) get a "(MD)"/"(TX)" suffix everywhere, including the
+# outreach-note keys, so notes can't cross states.
+STATE = st.sidebar.radio("State", ["Maryland", "Texas", "All"], horizontal=True)
 DATA_FILES = {
     "Maryland": "data/Hindu_Origin_Owners_Mapped.xlsx",
     "Texas": "data/TX_Hindu_Owners.xlsx",
@@ -48,22 +51,29 @@ DATA_FILES = {
 DEFAULT_VIEW = {
     "Maryland": (39.0458, -76.6413, 8),
     "Texas": (31.0, -99.5, 6),
+    "All": (34.8, -92.5, 5),
 }
+STATES = list(DATA_FILES) if STATE == "All" else [STATE]
+ABBR = {"Maryland": "MD", "Texas": "TX"}
+# measured 2026-10-18 over both exports — keep in sync if states added
+COUNTY_COLLISIONS = {"HOWARD", "WASHINGTON"}
 
-st.title(f"🗺️ {STATE} Hindu Property Owners Dashboard")
-st.markdown(f"Interactive visualization of property ownership patterns across {STATE} counties.")
+title = "All States" if STATE == "All" else STATE
+st.title(f"🗺️ {title} Hindu Property Owners Dashboard")
+st.markdown(f"Interactive visualization of property ownership patterns across {title} counties.")
 
-# Load Data
-DATA_FILE = DATA_FILES[STATE]
-
-if not os.path.exists(DATA_FILE):
-    if STATE == "Maryland":
-        # Fallback to base file if mapped doesn't exist yet
-        DATA_FILE = 'data/Hindu_Origin_Owners.xlsx'
-        st.warning("📍 Geocoding is in progress. Showing raw data (map will be empty until coordinates are added).")
-    else:
-        st.error(f"Texas data file missing: {DATA_FILE} — run scripts/tx_export.py")
-        st.stop()
+# per-state file resolution (MD falls back to the un-geocoded base file)
+_resolved = {}
+for _s in STATES:
+    _f = DATA_FILES[_s]
+    if not os.path.exists(_f):
+        if _s == "Maryland":
+            _f = "data/Hindu_Origin_Owners.xlsx"
+            st.warning("📍 Geocoding is in progress. Showing raw Maryland data (map will be empty until coordinates are added).")
+        else:
+            st.error(f"Texas data file missing: {_f} — run scripts/tx_export.py")
+            st.stop()
+    _resolved[_s] = _f
 
 
 # ------------------------------------------------------------ outreach log
@@ -82,6 +92,19 @@ def commented_keys():
 
 def _norm(text):
     return " ".join(str(text or "").upper().split())
+
+def _comment_key_variants(county, address):
+    """Store keys a row could be filed under.
+
+    New notes use the display county (collision counties carry a
+    "(MD)"/"(TX)" suffix so the states can't collide). Legacy notes used
+    the bare county — TX didn't exist then, so a bare collision-county
+    note is always Maryland's.
+    """
+    keys = [(county, address)]
+    if county.endswith(" (MD)"):
+        keys.append((county[:-5], address))  # legacy MD key
+    return keys
 
 @st.cache_data
 def load_data(file):
@@ -141,9 +164,42 @@ def load_data(file):
     df.attrs['col_mapping'] = col_mapping
     return df
 
+@st.cache_data
+def load_state_frame(state, file):
+    """One state's export -> canonical columns + State + display county.
+
+    Display county gets a "(MD)"/"(TX)" suffix only for names that exist
+    in BOTH states (HOWARD, WASHINGTON) so filters, table, markers and
+    outreach-note keys can't mix them up.
+    """
+    raw = load_data(file)
+    cm = raw.attrs.get("col_mapping", {})
+
+    def c(name):
+        return cm.get(name, name)
+
+    out = pd.DataFrame({
+        "State": state,
+        "Owner Name": raw[c("owner_name")].astype(str),
+        "Address": raw[c("address")].astype(str),
+        "County": raw[c("county")].astype(str),
+        "Category": raw[c("sub_category")] if c("sub_category") in raw.columns else "",
+    })
+    for canon, mapped in (("Latitude", "latitude"), ("Longitude", "longitude")):
+        src = c(mapped)
+        out[canon] = pd.to_numeric(raw[src], errors="coerce") if src in raw.columns else None
+    out["Method"] = raw[c("Method")] if c("Method") in raw.columns else ""
+    _suffix = f" ({ABBR[state]})"
+    out["County"] = out["County"].apply(
+        lambda v: v if str(v).strip().upper() not in COUNTY_COLLISIONS else f"{v}{_suffix}")
+    return out
+
 try:
-    df = load_data(DATA_FILE)
-    col_mapping = df.attrs.get('col_mapping', {})
+    frames = [load_state_frame(s, _resolved[s]) for s in STATES]
+    df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+    col_mapping = {"county": "County", "latitude": "Latitude",
+                   "longitude": "Longitude", "owner_name": "Owner Name",
+                   "address": "Address", "sub_category": "Category"}
 
     # Helper function to get actual column name
     def get_col(mapped_name):
@@ -327,8 +383,16 @@ try:
                 # Keys of properties that already have outreach notes —
                 # marker gets a 💬 badge + green color so people see prior
                 # outreach at a glance
-                commented_js = json.dumps(
-                    sorted(c + "|" + a for c, a in _commented))
+                # store keys -> every display form they should badge.
+                # Legacy bare HOWARD/WASHINGTON notes are Maryland's, so
+                # they also badge their "(MD)" markers.
+                _badge_keys = set()
+                for _c, _a in _commented:
+                    _ck, _ak = _norm(_c), _norm(_a)
+                    _badge_keys.add(f"{_ck}|{_ak}")
+                    if _ck in COUNTY_COLLISIONS:
+                        _badge_keys.add(f"{_ck} (MD)|{_ak}")
+                commented_js = json.dumps(sorted(_badge_keys))
                 callback = """
                 function (row) {
                     var COMMENTED = new Set(%s);
@@ -415,7 +479,8 @@ try:
         st.subheader("📋 Property Details")
 
         # Display table with pretty headers
-        display_cols = [owner_col, addr_col, county_col]
+        display_cols = ([get_col("State")] if STATE == "All" else []) + [
+            owner_col, addr_col, county_col]
         if cat_col in df.columns:
             display_cols.append(cat_col)
         if lat_col in filtered_df.columns and lon_col in filtered_df.columns:
@@ -425,6 +490,7 @@ try:
         
         # Map columns to readable names
         column_config = {
+            "State": st.column_config.TextColumn("State"),
             owner_col: st.column_config.TextColumn("Owner Name"),
             addr_col: st.column_config.TextColumn("Property Address"),
             county_col: st.column_config.TextColumn("County"),
@@ -463,7 +529,16 @@ try:
                 st.info("Comments backend not configured. Set SUPABASE_URL / SUPABASE_ANON_KEY (see README).")
             else:
                 try:
-                    comments = store.get_comments(sel_county, sel_address)
+                    # display key first, legacy bare MD key as fallback
+                    comments, _seen = [], set()
+                    for _c, _a in _comment_key_variants(sel_county, sel_address):
+                        for item in (store.get_comments(_c, _a) or []):
+                            _k = item.get("id") or (item.get("author"),
+                                                    item.get("created_at"),
+                                                    item.get("comment"))
+                            if _k not in _seen:
+                                _seen.add(_k)
+                                comments.append(item)
                 except Exception as e:
                     comments = []
                     st.error(f"Could not load notes: {e}")
