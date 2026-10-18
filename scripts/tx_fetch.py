@@ -198,9 +198,23 @@ def main():
             print(f"[{county}] config failed: {e}", flush=True)
             continue
         session = requests.Session()
+        # pre-flight: config can resolve while the API host is down
+        # (falls 2026-10-18) — 534 queries x retry-cap x timeouts would
+        # crawl for hours. One probe, bail early.
         session.headers["User-Agent"] = (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129 Safari/537.36")
+        try:
+            pf = session.get(api + "PropertyDetails",
+                             params={"limit": 1, "page": 1, "sort": "OwnerName",
+                                     "searchField": "", "searchOwnerName": "patel",
+                                     "streetNumber": "", "streetName": ""},
+                             timeout=15)
+            if pf.status_code not in (200, 400):
+                raise RuntimeError(f"pre-flight HTTP {pf.status_code}")
+        except Exception as e:
+            print(f"[{county}] API down ({e}), skipping county", flush=True)
+            continue
         jobs = [(q, ) for q in surnames if f"{county}|{q}" not in skip]
         if not jobs:
             print(f"[{county}] fully done, skip", flush=True)
