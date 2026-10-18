@@ -7,6 +7,13 @@
 # stdout redirect dies with EX_CONFIG; see launchd-external-volume
 # memory).
 cd "$(dirname "$0")/.." || exit 1
+# Never stack a refresh on a live fetch/geocode — two writers on the same
+# sqlite file (the initial 44k-row geocode backlog ran ~8h past the first
+# fire window). Retry next daily probe instead.
+if pgrep -f "scripts/tx_(fetch|geocode|export|reclassify).py" > /dev/null; then
+    echo "=== $(date '+%F %T') tx refresh deferred — fetch/geocode already running ===" >> "$HOME/Library/Logs/tx-property-refresh.log"
+    exit 0
+fi
 MARKER=logs/.last_tx_refresh
 NOW=$(date +%s)
 LAST=$(cat "$MARKER" 2>/dev/null || echo 0)

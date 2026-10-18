@@ -159,7 +159,8 @@ def main():
         surnames = [s for s in surnames if s in set(args.only)]
     print(f"{len(counties)} counties x {len(surnames)} surnames")
 
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)
+    con.execute("PRAGMA journal_mode=WAL")  # flips once, persists in file
     con.executescript(SCHEMA)
     con.commit()
 

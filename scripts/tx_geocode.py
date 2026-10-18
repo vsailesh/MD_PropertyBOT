@@ -97,7 +97,8 @@ def main():
     args = ap.parse_args()
 
     from tx_export import parse_situs
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)
+    con.execute("PRAGMA journal_mode=WAL")  # flips once, persists in file
     con.row_factory = sqlite3.Row
     rows = con.execute(
         """SELECT county, property_id, situs_display FROM tx_properties
