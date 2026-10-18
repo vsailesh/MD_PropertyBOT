@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from comments_store import CommentsStore, OUTREACH_TYPES
 from auth_gate import current_user as _current_user, is_editor as _is_editor
 
-st.set_page_config(page_title="Maryland Property Owners", layout="wide", page_icon="🏠")
+st.set_page_config(page_title="Hindu Property Owners Dashboard", layout="wide", page_icon="🏠")
 
 st.markdown("""
 <style>
@@ -37,16 +37,33 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🗺️ Maryland Hindu Property Owners Dashboard")
-st.markdown("Interactive visualization of property ownership patterns across Maryland counties.")
+# ------------------------------------------------------------ state picker
+# Each state keeps its own db schema + export format (MD: SDAT, TX:
+# countytaxrates.com); only the dashboard view is shared.
+STATE = st.sidebar.radio("State", ["Maryland", "Texas"], horizontal=True)
+DATA_FILES = {
+    "Maryland": "data/Hindu_Origin_Owners_Mapped.xlsx",
+    "Texas": "data/TX_Hindu_Owners.xlsx",
+}
+DEFAULT_VIEW = {
+    "Maryland": (39.0458, -76.6413, 8),
+    "Texas": (31.0, -99.5, 6),
+}
+
+st.title(f"🗺️ {STATE} Hindu Property Owners Dashboard")
+st.markdown(f"Interactive visualization of property ownership patterns across {STATE} counties.")
 
 # Load Data
-DATA_FILE = 'data/Hindu_Origin_Owners_Mapped.xlsx'
+DATA_FILE = DATA_FILES[STATE]
 
 if not os.path.exists(DATA_FILE):
-    # Fallback to base file if mapped doesn't exist yet
-    DATA_FILE = 'data/Hindu_Origin_Owners.xlsx'
-    st.warning("📍 Geocoding is in progress. Showing raw data (map will be empty until coordinates are added).")
+    if STATE == "Maryland":
+        # Fallback to base file if mapped doesn't exist yet
+        DATA_FILE = 'data/Hindu_Origin_Owners.xlsx'
+        st.warning("📍 Geocoding is in progress. Showing raw data (map will be empty until coordinates are added).")
+    else:
+        st.error(f"Texas data file missing: {DATA_FILE} — run scripts/tx_export.py")
+        st.stop()
 
 
 # ------------------------------------------------------------ outreach log
@@ -83,6 +100,8 @@ def load_data(file):
         if 'owner' in col_lower and 'name' in col_lower:
             col_mapping['owner_name'] = col
         elif col_lower == 'address' or col_lower == 'addr':
+            col_mapping['address'] = col
+        elif col_lower == 'street':  # TX export names it Street
             col_mapping['address'] = col
         elif col_lower == 'county':
             col_mapping['county'] = col
@@ -193,10 +212,15 @@ try:
         else:
             with st.sidebar.expander("✍️ Editor sign-in", expanded=True):
                 st.caption("Editors sign in with Google. Readers don't need to sign in.")
-                try:
-                    st.login("google")
-                except Exception as e:
-                    st.info(f"Google sign-in not configured: {e}")
+                if os.environ.get("SMOKE_NO_AUTH"):
+                    # local dev/smoke flag: skips rendering the login
+                    # control (grants nothing — view stays read-only)
+                    st.caption("(login control hidden: SMOKE_NO_AUTH)")
+                else:
+                    try:
+                        st.login("google")
+                    except Exception as e:
+                        st.info(f"Google sign-in not configured: {e}")
 
         # 5. Download Button
         st.sidebar.markdown("---")
@@ -204,7 +228,7 @@ try:
         st.sidebar.download_button(
             label="📥 Export Filtered Data (CSV)",
             data=csv,
-            file_name="maryland_property_export.csv",
+            file_name=f"{STATE.lower()}_property_export.csv",
             mime="text/csv",
         )
 
@@ -237,8 +261,7 @@ try:
             v_lat, v_lon = map_df[lat_col].mean(), map_df[lon_col].mean()
             v_zoom = 12
         else:
-            v_lat, v_lon = 39.0458, -76.6413
-            v_zoom = 8
+            v_lat, v_lon, v_zoom = DEFAULT_VIEW[STATE]
 
         # We need a dynamic key that changes when filters change to force st_folium to re-render,
         # otherwise Leaflet tile layers sometimes vanish to a grey void on in-place update.
@@ -493,4 +516,4 @@ except Exception as e:
     st.info("Make sure Hindu_Origin_Owners.xlsx exists in the project root.")
 
 st.markdown("---")
-st.caption("Data source: Maryland SDAT | Geocoding: OpenStreetMap (Nominatim)")
+st.caption("Data source: Maryland SDAT / Texas countytaxrates.com | Geocoding: ArcGIS")

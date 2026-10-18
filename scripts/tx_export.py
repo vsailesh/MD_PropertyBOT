@@ -67,7 +67,8 @@ def main():
     where = "" if args.all else "WHERE is_hindu = 1"
     df = pd.read_sql_query(
         f"SELECT county, owner_name, doing_business_as, situs_display, "
-        f"market_value, geo_id, is_hindu, category, last_seen "
+        f"market_value, geo_id, is_hindu, category, latitude, longitude, "
+        f"geo_method, last_seen "
         f"FROM tx_properties {where}", con)
     con.close()
     if df.empty:
@@ -85,6 +86,10 @@ def main():
         "Zip Code": parsed.apply(lambda t: t[3]),
         "Market Value": df["market_value"],
         "Parcel (geoId)": df["geo_id"],
+        # geocoder columns (MD Mapped.xlsx parity — dashboard reads these)
+        "Latitude": df["latitude"],
+        "Longitude": df["longitude"],
+        "Method": df["geo_method"],
         "Surname": surnames,
         "Region": origins.apply(lambda o: o["region"]),
         "Countries": origins.apply(lambda o: o["countries"]),
