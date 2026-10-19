@@ -43,6 +43,9 @@ MIN_OCCURRENCES = 25
 # Kept conservative — pan-Indian diaspora in MD skews Telugu/Tamil/Gujarati/
 # Punjabi/Bengali/Nepali. Homographs that are ALSO common English surnames
 # (RAY, DEAN, PAUL...) go in AMBIGUOUS below instead.
+# Last line: Tamil/Kannada -AN forms found by TX surname-gap audit
+# 2026-10-18 (dict had NATARAJ but not NATARAJAN — substring fetch stored
+# the rows, exact-match classifier missed them).
 CURATED_SURNAMES = """
 SHARMA VERMA GUPTA YADAV MISHRA PANDEY SHUKLA TRIPATHI DUBEY CHAUBEY TIWARI
 SRIVASTAVA AWASTHI AGNIHOTRI DIXIT DWIVEDI UPADHYAY PATHAK SINHA THAKUR
@@ -84,6 +87,7 @@ KADAMBI DOSAJ KONANKI PARIBRAMATH CHERIYAN THANGASAMY NICHANI GANJI
 ESWARAN BEHERA SUD RAO SASTRY SURYA
 JHA MAHTO BHATTARAI BARAL LAMA SHERPA RAI
 THAKURTA MOHANTY PANDA MISHRA ROUT DASH PANDA
+NATARAJAN CHANDRASEKARAN CHANDRAN RAMAKRISHNAN PALANIAPPAN NAGARAJ RAJENDRAN
 """
 
 # Surname-position tokens that are ALSO common English surnames or show up
