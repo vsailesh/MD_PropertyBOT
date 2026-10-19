@@ -1061,6 +1061,23 @@ class RaceEthnicityPredictor:
         # distinctive given alone rescues dict-missing surnames.
         self.ambiguous_last = set(self.name_dict.get('ambiguous_last_names', []))
         self.distinctive_first = set(self.name_dict.get('distinctive_first_names', []))
+        # char-ngram segment scorer (scripts/train_name_model.py), rule 6
+        # fallback for dict-missing surnames. Absent file = rule disabled.
+        self.ngram_model = None
+        self.ngram_threshold = 0.95
+        self.ngram_min_len = 4
+        self._ngram_cache = {}
+        model_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'models', 'name_ngram.joblib')
+        if os.path.exists(model_path):
+            try:
+                import joblib
+                bundle = joblib.load(model_path)
+                self.ngram_model = bundle['model']
+                self.ngram_threshold = bundle.get('threshold', 0.95)
+                self.ngram_min_len = bundle.get('min_len', 4)
+            except Exception as e:
+                print(f"⚠️ name_ngram.joblib unloadable ({e}); rule 6 off")
 
         # Basic expanded patterns for general race assignment
         self.expanded_patterns = {
@@ -1180,6 +1197,21 @@ class RaceEthnicityPredictor:
                 # `SAMIR JAIN`, `DEEPAK SHARMA`) — Indian given at
                 # position 0 with the surname later in the segment
                 is_hindu = True
+            if not is_hindu and self.ngram_model is not None and \
+                    sur not in surname_pool and sur not in self.ambiguous_last \
+                    and len(sur) >= self.ngram_min_len:
+                # 6. char-ngram segment scorer (trained on our flagged vs
+                # unflagged segments): dict-missing surname but the whole
+                # segment scores >= threshold — catches rare surnames the
+                # dict never listed (`PAMMU MOHAN RAO`). Cached: owner
+                # segments repeat heavily across rows.
+                seg_str = ' '.join(seg)
+                if seg_str not in self._ngram_cache:
+                    self._ngram_cache[seg_str] = bool(
+                        self.ngram_model.predict_proba([seg_str])[0][1]
+                        >= self.ngram_threshold)
+                if self._ngram_cache[seg_str]:
+                    is_hindu = True
             if is_hindu:
                 is_indian = True
                 category = 'Hindu/Sikh'
