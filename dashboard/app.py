@@ -317,10 +317,19 @@ try:
             st.session_state.map_bounds = None
 
         # Determine initial center and zoom
-        # Based ONLY on current filters so the baseline HTML stays perfectly consistent during pan/zoom
+        # Based ONLY on current filters so the baseline HTML stays perfectly consistent during pan/zoom.
+        # Full state (all counties, no search): DEFAULT_VIEW — a z12 mean-center
+        # viewport fits one metro, which made the viewport counter show ~2k of
+        # 50k TX rows even though every row is geocoded. Narrowed: center on
+        # the filtered mean at z12.
         if not map_df.empty:
-            v_lat, v_lon = map_df[lat_col].mean(), map_df[lon_col].mean()
-            v_zoom = 12
+            narrowed = (len(selected_county) < len(df[county_col].unique())
+                        or bool(search_query))
+            if narrowed:
+                v_lat, v_lon = map_df[lat_col].mean(), map_df[lon_col].mean()
+                v_zoom = 12
+            else:
+                v_lat, v_lon, v_zoom = DEFAULT_VIEW[STATE]
         else:
             v_lat, v_lon, v_zoom = DEFAULT_VIEW[STATE]
 
