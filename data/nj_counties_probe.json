@@ -1,0 +1,434 @@
+{
+ "ATLANTIC": {
+  "districts": 23,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "BERGEN": {
+  "districts": 70,
+  "all_smith": 571,
+  "live_first": [
+   [
+    "ALPINE",
+    1
+   ],
+   [
+    "BERGENFIELD",
+    13
+   ],
+   [
+    "BOGOTA",
+    3
+   ],
+   [
+    "CARLSTADT",
+    3
+   ],
+   [
+    "CLIFFSIDE",
+    4
+   ],
+   [
+    "CLOSTER",
+    5
+   ]
+  ],
+  "live_n": 57
+ },
+ "BURLINGTON": {
+  "districts": 40,
+  "all_smith": 1026,
+  "live_first": [
+   [
+    "BASS RIVER",
+    5
+   ],
+   [
+    "BEVERLY",
+    2
+   ],
+   [
+    "BORDENTOWN CITY",
+    6
+   ],
+   [
+    "BORDENTOWN TWP",
+    13
+   ],
+   [
+    "BURLINGTON CITY",
+    30
+   ],
+   [
+    "BURLINGTON TWP",
+    44
+   ]
+  ],
+  "live_n": 37
+ },
+ "CAMDEN": {
+  "districts": 37,
+  "all_smith": 303,
+  "live_first": [
+   [
+    "BELLMAWR",
+    18
+   ],
+   [
+    "CAMDEN CITY",
+    109
+   ],
+   [
+    "GLOUCESTER TOWNSHIP",
+    147
+   ],
+   [
+    "HADDONFIELD",
+    16
+   ],
+   [
+    "HADDON HEIGHTS",
+    13
+   ]
+  ],
+  "live_n": 5
+ },
+ "CAPE MAY": {
+  "districts": 16,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "CUMBERLAND": {
+  "districts": 14,
+  "all_smith": 384,
+  "live_first": [
+   [
+    "BRIDGETON",
+    26
+   ],
+   [
+    "COMMERCIAL",
+    40
+   ],
+   [
+    "DEERFIELD",
+    15
+   ],
+   [
+    "DOWNE",
+    6
+   ],
+   [
+    "FAIRFIELD",
+    27
+   ],
+   [
+    "GREENWICH",
+    6
+   ]
+  ],
+  "live_n": 12
+ },
+ "ESSEX": {
+  "districts": 22,
+  "all_smith": 9,
+  "live_first": [
+   [
+    "MILLBURN",
+    9
+   ]
+  ],
+  "live_n": 1
+ },
+ "GLOUCESTER": {
+  "districts": 24,
+  "all_smith": 654,
+  "live_first": [
+   [
+    "CLAYTON",
+    29
+   ],
+   [
+    "DEPTFORD",
+    61
+   ],
+   [
+    "EAST GREENWICH",
+    36
+   ],
+   [
+    "ELK",
+    12
+   ],
+   [
+    "FRANKLIN",
+    43
+   ],
+   [
+    "GLASSBORO",
+    36
+   ]
+  ],
+  "live_n": 24
+ },
+ "HUDSON": {
+  "districts": 12,
+  "all_smith": 267,
+  "live_first": [
+   [
+    "BAYONNE",
+    38
+   ],
+   [
+    "EAST NEWARK",
+    1
+   ],
+   [
+    "GUTTENBERG",
+    3
+   ],
+   [
+    "HOBOKEN",
+    51
+   ],
+   [
+    "JERSEY CITY",
+    137
+   ],
+   [
+    "KEARNY",
+    11
+   ]
+  ],
+  "live_n": 10
+ },
+ "HUNTERDON": {
+  "districts": 26,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "MERCER": {
+  "districts": 12,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "MIDDLESEX": {
+  "districts": 25,
+  "all_smith": 625,
+  "live_first": [
+   [
+    "CARTERET",
+    12
+   ],
+   [
+    "CRANBURY",
+    6
+   ],
+   [
+    "DUNELLEN",
+    9
+   ],
+   [
+    "EAST BRUNSWICK",
+    32
+   ],
+   [
+    "EDISON",
+    40
+   ],
+   [
+    "HELMETTA",
+    5
+   ]
+  ],
+  "live_n": 25
+ },
+ "MONMOUTH": {
+  "districts": 53,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "MORRIS": {
+  "districts": 39,
+  "all_smith": 690,
+  "live_first": [
+   [
+    "BOONTON TOWN",
+    12
+   ],
+   [
+    "BOONTON TOWNSHIP",
+    6
+   ],
+   [
+    "BUTLER",
+    10
+   ],
+   [
+    "CHATHAM BOROUGH",
+    12
+   ],
+   [
+    "CHATHAM TOWNSHIP",
+    17
+   ],
+   [
+    "CHESTER BOROUGH",
+    5
+   ]
+  ],
+  "live_n": 38
+ },
+ "OCEAN": {
+  "districts": 33,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "PASSAIC": {
+  "districts": 16,
+  "all_smith": 293,
+  "live_first": [
+   [
+    "BLOOMINGDALE",
+    15
+   ],
+   [
+    "CLIFTON",
+    34
+   ],
+   [
+    "HALEDON",
+    5
+   ],
+   [
+    "HAWTHORNE",
+    15
+   ],
+   [
+    "NORTH HALEDON",
+    6
+   ],
+   [
+    "PASSAIC",
+    13
+   ]
+  ],
+  "live_n": 15
+ },
+ "SALEM": {
+  "districts": 15,
+  "all_smith": 220,
+  "live_first": [
+   [
+    "CARNEYS POINT",
+    18
+   ],
+   [
+    "ELMER",
+    5
+   ],
+   [
+    "ELSINBORO",
+    8
+   ],
+   [
+    "MANNINGTON",
+    5
+   ],
+   [
+    "OLDMANS",
+    5
+   ],
+   [
+    "PENNS GROVE",
+    11
+   ]
+  ],
+  "live_n": 13
+ },
+ "SOMERSET": {
+  "districts": 21,
+  "all_smith": 32,
+  "live_first": [
+   [
+    "BRIDGEWATER",
+    32
+   ]
+  ],
+  "live_n": 1
+ },
+ "SUSSEX": {
+  "districts": 24,
+  "all_smith": 0,
+  "live_first": [],
+  "live_n": 0
+ },
+ "UNION": {
+  "districts": 21,
+  "all_smith": 480,
+  "live_first": [
+   [
+    "BERKELEY HEIGHTS",
+    11
+   ],
+   [
+    "CLARK",
+    15
+   ],
+   [
+    "CRANFORD",
+    23
+   ],
+   [
+    "ELIZABETH",
+    15
+   ],
+   [
+    "FANWOOD",
+    9
+   ],
+   [
+    "GARWOOD",
+    3
+   ]
+  ],
+  "live_n": 20
+ },
+ "WARREN": {
+  "districts": 22,
+  "all_smith": 379,
+  "live_first": [
+   [
+    "ALPHA",
+    12
+   ],
+   [
+    "BELVIDERE",
+    4
+   ],
+   [
+    "BLAIRSTOWN",
+    15
+   ],
+   [
+    "FRANKLIN",
+    22
+   ],
+   [
+    "FRELINGHUYSEN",
+    13
+   ],
+   [
+    "GREENWICH",
+    11
+   ]
+  ],
+  "live_n": 21
+ }
+}

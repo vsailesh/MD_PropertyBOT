@@ -43,20 +43,23 @@ st.markdown("""
 # both frames — county names that exist in BOTH states (HOWARD,
 # WASHINGTON) get a "(MD)"/"(TX)" suffix everywhere, including the
 # outreach-note keys, so notes can't cross states.
-STATE = st.sidebar.radio("State", ["Maryland", "Texas", "All"], horizontal=True)
+STATE = st.sidebar.radio("State", ["Maryland", "Texas", "New Jersey", "All"], horizontal=True)
 DATA_FILES = {
     "Maryland": "data/Hindu_Origin_Owners_Mapped.xlsx",
     "Texas": "data/TX_Hindu_Owners.xlsx",
+    "New Jersey": "data/NJ_Hindu_Owners.xlsx",
 }
 DEFAULT_VIEW = {
     "Maryland": (39.0458, -76.6413, 8),
     "Texas": (31.0, -99.5, 6),
-    "All": (34.8, -92.5, 5),
+    "New Jersey": (40.1907, -74.6726, 7),
+    "All": (35.5, -88.0, 5),
 }
 STATES = list(DATA_FILES) if STATE == "All" else [STATE]
-ABBR = {"Maryland": "MD", "Texas": "TX"}
-# measured 2026-10-18 over both exports — keep in sync if states added
-COUNTY_COLLISIONS = {"HOWARD", "WASHINGTON"}
+ABBR = {"Maryland": "MD", "Texas": "TX", "New Jersey": "NJ"}
+# measured 2026-10-18/19 over the exports — keep in sync if states added
+# (HOWARD/WASHINGTON = MD+TX; SOMERSET = MD+NJ)
+COUNTY_COLLISIONS = {"HOWARD", "WASHINGTON", "SOMERSET"}
 
 title = "All States" if STATE == "All" else STATE
 st.title(f"🗺️ {title} Hindu Property Owners Dashboard")
@@ -71,7 +74,7 @@ for _s in STATES:
             _f = "data/Hindu_Origin_Owners.xlsx"
             st.warning("📍 Geocoding is in progress. Showing raw Maryland data (map will be empty until coordinates are added).")
         else:
-            st.error(f"Texas data file missing: {_f} — run scripts/tx_export.py")
+            st.error(f"{_s} data file missing: {_f} — run that state's export script")
             st.stop()
     _resolved[_s] = _f
 
@@ -122,6 +125,8 @@ def load_data(file):
         col_lower = col.lower().strip()
         if 'owner' in col_lower and 'name' in col_lower:
             col_mapping['owner_name'] = col
+        elif 'property address' in col_lower:  # NJ export (before generic)
+            col_mapping['address'] = col
         elif col_lower == 'address' or col_lower == 'addr':
             col_mapping['address'] = col
         elif col_lower == 'street':  # TX export names it Street
@@ -591,4 +596,4 @@ except Exception as e:
     st.info("Make sure Hindu_Origin_Owners.xlsx exists in the project root.")
 
 st.markdown("---")
-st.caption("Data source: Maryland SDAT / Texas countytaxrates.com | Geocoding: ArcGIS")
+st.caption("Data source: Maryland SDAT / Texas countytaxrates.com / New Jersey county tax boards (taxrecords-nj.com) | Geocoding: ArcGIS")
