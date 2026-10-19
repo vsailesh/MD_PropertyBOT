@@ -21,7 +21,7 @@ sys.path.insert(0, ROOT)
 
 DB_PATH = os.path.join(ROOT, "data", "nj_properties.db")
 
-ARCGIS = "https://geocoding.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+ARCGIS = "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
 UA = "maryland-property-agent/1.0 (research)"
 
 # progressively coarser query shapes; every query pins New Jersey
@@ -84,6 +84,8 @@ def main():
     sess.headers.update({"User-Agent": UA})
 
     def work(row):
+        # returns update tuple; DB write happens on the main thread (sqlite
+        # connections are thread-bound)
         pid, loc, mun, csz = row
         lat = lng = None
         method = None
@@ -100,14 +102,14 @@ def main():
                 break
         if lat is None:
             method = "Failed"
-        con.execute("UPDATE nj_properties SET latitude=?, longitude=?, geo_method=? "
-                    "WHERE property_id=?", (lat, lng, method, pid))
-        return lat is not None
+        return (lat, lng, method, pid)
 
     ok = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for i, good in enumerate(ex.map(work, rows), 1):
-            ok += bool(good)
+        for i, (lat, lng, method, pid) in enumerate(ex.map(work, rows), 1):
+            ok += lat is not None
+            con.execute("UPDATE nj_properties SET latitude=?, longitude=?, geo_method=? "
+                        "WHERE property_id=?", (lat, lng, method, pid))
             if i % 200 == 0:
                 con.commit()
                 print(f"  {i}/{len(rows)} | {ok} ok", flush=True)
