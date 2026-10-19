@@ -1149,6 +1149,7 @@ class RaceEthnicityPredictor:
             segments = [all_parts] if all_parts else []
 
         surname_pool = self.hindu_last | self.sikh_names | self.hindu_first
+        first_name_pool = self.hindu_first | self.distinctive_first
         for seg in segments:
             sur = seg[0]
             givens = seg[1:]
@@ -1172,6 +1173,12 @@ class RaceEthnicityPredictor:
                 is_hindu = True
             if not is_hindu and any(t in self.distinctive_first for t in givens):
                 # 4. distinctive given rescues dict-missing surname
+                is_hindu = True
+            if not is_hindu and sur in first_name_pool and \
+                    any(t in (self.hindu_last | self.sikh_names) for t in givens):
+                # 5. reversed order (given-first rows, ~1.6% of segments:
+                # `SAMIR JAIN`, `DEEPAK SHARMA`) — Indian given at
+                # position 0 with the surname later in the segment
                 is_hindu = True
             if is_hindu:
                 is_indian = True
