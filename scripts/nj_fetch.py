@@ -46,6 +46,13 @@ DICT_PATH = os.path.join(ROOT, "data", "hindu_names_dict.json")
 
 BASE = "https://taxrecords-nj.com/pub/cgi"
 DL = "https://taxrecords-nj.com/pub/download"
+
+# counties running the same CGI engine on their OWN host (Monmouth tax
+# board, discovered 2026-10-20 via OPRS iframe; POST inf.cgi identical)
+ALT_HOSTS = {
+    13: ("https://tax1.co.monmouth.nj.us/cgi-bin",
+         "https://tax1.co.monmouth.nj.us/cgi-bin/../download"),
+}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 Chrome/155.0.0.0 Safari/537.36")
 SLEEP = 0.4
@@ -65,6 +72,7 @@ LIVE_COUNTIES = {
     8: ("GLOUCESTER", "full"), 9: ("HUDSON", "full"), 12: ("MIDDLESEX", "full"),
     14: ("MORRIS", "full"), 16: ("PASSAIC", "full"), 17: ("SALEM", "full"),
     20: ("UNION", "full"), 21: ("WARREN", "full"),
+    13: ("MONMOUTH", "full"),  # own CGI host — see ALT_HOSTS
     4: ("CAMDEN", "partial"), 7: ("ESSEX", "partial"), 18: ("SOMERSET", "partial"),
 }
 
@@ -124,13 +132,14 @@ def connect():
 
 def fetch_csv(sess, n, query):
     """POST owner search for whole county; return parsed CSV rows."""
+    base, dl = ALT_HOSTS.get(n, (BASE, DL))
     data = dict(ms_user=f"ctb{n}", passwd="", srch_type="1",
                 select_cc=f"{n:02d}01", district=f"{n:02d}00",
                 adv="1", out_type="3", ms_ln="1000",
                 owner=query, block="", lot="", qual="", p_loc="", pageno="1")
     for attempt in range(3):
         try:
-            r = sess.post(f"{BASE}/inf.cgi", data=data, timeout=120)
+            r = sess.post(f"{base}/inf.cgi", data=data, timeout=120)
             m = re.search(r"(\d+) Records Found", r.text)
             z = re.search(r"href=\.\./download/(\S+?\.zip)", r.text)
             if m is None:
@@ -138,7 +147,7 @@ def fetch_csv(sess, n, query):
             total = int(m.group(1))
             if total == 0 or not z:
                 return [], 0
-            rz = sess.get(f"{DL}/{z.group(1)}", timeout=180)
+            rz = sess.get(f"{dl}/{z.group(1)}", timeout=180)
             zf = zipfile.ZipFile(io.BytesIO(rz.content))
             name = zf.namelist()[0]
             # duplicate column names across prior-year blocks — keep FIRST
