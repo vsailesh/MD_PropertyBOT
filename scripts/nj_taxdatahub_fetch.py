@@ -242,8 +242,11 @@ def main():
                     break
                 time.sleep(1)
             else:
-                print(f"{county}: grecaptcha never ready, skipping")
-                continue
+                # exit nonzero — a rc=0 here made the runner declare DONE at
+                # 04:31 on 2026-10-21 with SOMERSET 93/612 and CAMDEN 0/612
+                print(f"{county}: grecaptcha never ready, exiting rc=1", flush=True)
+                con.close()
+                sys.exit(1)
             fn = JS_SEARCH % (SITEKEY, hub.split("/")[0])
 
             giveup_streak = 0
