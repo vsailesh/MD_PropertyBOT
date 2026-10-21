@@ -314,7 +314,7 @@ def main():
                     frm += len(docs)
                     if frm >= total or not docs:
                         break
-                    time.sleep(0.8)
+                    time.sleep(2)
                 grand += stored
                 if gave_up:
                     # do NOT log — a give-up row would look "done" to the
@@ -337,7 +337,10 @@ def main():
                 con.commit()
                 if stored:
                     print(f"  {county} {q}: {total} found, +{stored} new", flush=True)
-                time.sleep(1.5)
+                # recaptcha v3 punishes rapid-fire — 1.5s here rotted the
+                # score mid-county on 2026-10-20 (BOT from surname #1 after
+                # ~600 searches); 6s keeps the pass rate up
+                time.sleep(6)
 
     tot = con.execute("SELECT COUNT(*), SUM(is_hindu) FROM nj_properties").fetchone()
     print(f"\nTOTAL {tot[0]:,} rows, {tot[1] or 0:,} hindu")
