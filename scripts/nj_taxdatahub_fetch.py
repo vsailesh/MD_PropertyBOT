@@ -133,7 +133,7 @@ class CDP:
             if target:
                 break
             time.sleep(0.5)
-        self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=120)
+        self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=300)
         self.cmd("Page.enable")
         self.cmd("Runtime.enable")
         return self
@@ -258,6 +258,7 @@ def main():
                 frm = 0
                 total = 0
                 bot_retries = 0
+                gave_up = False
                 while True:
                     raw = b.js(f"({fn})({json.dumps(q)}, {frm})", await_promise=True)
                     if not raw or raw.get("err"):
@@ -269,6 +270,7 @@ def main():
                             time.sleep(20 * bot_retries)
                             continue
                         print(f"  {county} {q}: '{msg}' GIVING UP")
+                        gave_up = True
                         break
                     docs = raw["docs"]
                     total = raw["total"]
@@ -310,6 +312,12 @@ def main():
                         break
                     time.sleep(0.8)
                 grand += stored
+                if gave_up:
+                    # do NOT log — a give-up row would look "done" to the
+                    # resume check and silently skip the surname forever;
+                    # the next pass retries it
+                    time.sleep(60)
+                    continue
                 con.execute("INSERT OR REPLACE INTO nj_fetch_log VALUES (?,?,?,?,datetime('now'))",
                             (f"{county}/tdh", q, total, stored))
                 con.commit()
