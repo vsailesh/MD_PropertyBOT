@@ -1167,6 +1167,7 @@ class RaceEthnicityPredictor:
 
         surname_pool = self.hindu_last | self.sikh_names | self.hindu_first
         first_name_pool = self.hindu_first | self.distinctive_first
+        via_ngram = False  # hindu came from rule 6 only, not a dict token
         for seg in segments:
             sur = seg[0]
             givens = seg[1:]
@@ -1212,6 +1213,8 @@ class RaceEthnicityPredictor:
                         >= self.ngram_threshold)
                 if self._ngram_cache[seg_str]:
                     is_hindu = True
+                    via_ngram = True
+
             if is_hindu:
                 is_indian = True
                 category = 'Hindu/Sikh'
@@ -1229,12 +1232,36 @@ class RaceEthnicityPredictor:
         return {
             'is_indian': is_indian,
             'is_hindu': is_hindu,
-            'category': category
+            'category': category,
+            'via_ngram': via_ngram
         }
 
-    def predict_race(self, full_name: str) -> Dict[str, any]:
+    # ---- pranaam (classifier v3) -------------------------------------
+    # pranaam = byte-level muslim-pattern scorer (torch). muslim-vs-rest,
+    # NOT Indian-vs-rest — use ONLY to disambiguate rows where the dict is
+    # ambiguous. Batch-only: per-row torch inference on 2.7M MD rows would
+    # take hours; reclassify scripts score ambiguous names in one pass and
+    # feed the score into predict_race via muslim_score.
+    _pranaam_model = None  # class-level cache
+
+    @classmethod
+    def pranaam_scores(cls, names):
+        """List[full name] -> List[muslim score 0..1]. Lazy torch import."""
+        import pandas as pd
+        if cls._pranaam_model is None:
+            from pranaam import Naam
+            cls._pranaam_model = Naam()
+        df = pd.DataFrame({'full_name': list(names)})
+        out = cls._pranaam_model.estimate_muslim_name_pattern(df, name_column='full_name')
+        return out['muslim_score'].tolist()
+
+    def predict_race(self, full_name: str, muslim_score=None) -> Dict[str, any]:
         """
         Predict race/ethnicity from full name using multi-token local dict & ethnicolr.
+
+        v3: optional muslim_score (pranaam, batch-scored upstream) gates the
+        ambiguous band — names with an Indian signal but no decisive dict
+        token. Strong dict matches ignore it (dict wins both directions).
         """
         if not full_name or full_name == 'Not Found':
             return {'predicted_race': 'Unknown', 'confidence': 0, 'method': 'None'}
@@ -1264,6 +1291,33 @@ class RaceEthnicityPredictor:
         
         if getattr(self, 'is_business_entity', False):
             is_hindu = False
+
+        # v3 pranaam gate — only where the dict is genuinely undecided.
+        # Strong dict verdicts (hindu surname rules, muslim/christian token
+        # hits) always win both directions; pranaam arbitrates two bands:
+        #   a) hindu via rule-6 ngram ONLY + muslim >= 0.5 -> veto (dict-
+        #      missing MUSLIM rare surname that the ngram scorer mis-flagged)
+        #   b) no dict verdict + ambiguous surname + muslim <= 0.15 ->
+        #      rescue (Indian-adjacent surname the dict wouldn't commit on)
+        pranaam_used = False
+        if muslim_score is not None and not getattr(self, 'is_business_entity', False):
+            if (is_hindu and local_check.get('via_ngram')
+                    and muslim_score >= 0.5):
+                is_hindu = False
+                local_check = {'is_indian': True, 'is_hindu': False,
+                               'category': 'Muslim'}
+                pranaam_used = True
+            elif (not is_hindu and not local_check['is_indian']
+                    and surname in self.ambiguous_last
+                    and any(t in self.hindu_first for t in all_parts)
+                    and muslim_score <= 0.15):
+                # rescue needs BOTH an Indian-leaning token (weak hindu
+                # given — SAM/ROBIN alone must not qualify) and a low
+                # muslim score; pranaam corroborates, never creates
+                is_hindu = True
+                local_check = {'is_indian': True, 'is_hindu': True,
+                               'category': 'Hindu/Sikh'}
+                pranaam_used = True
 
         # Use ethnicolr if available
         if self.use_ethnicolr:
@@ -1315,7 +1369,7 @@ class RaceEthnicityPredictor:
                 'is_hindu': True,
                 'sub_category': 'Hindu',
                 'confidence': 90.0,
-                'method': 'Local Dictionary'
+                'method': 'Local Dictionary + pranaam' if pranaam_used else 'Local Dictionary'
             }
         elif local_check['is_indian']:
             return {
