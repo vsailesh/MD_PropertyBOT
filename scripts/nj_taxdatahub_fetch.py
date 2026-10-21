@@ -227,7 +227,7 @@ def main():
     con.commit()
 
     q_list = surnames()
-    print(f"{len(q_list)} surnames x {len(args.counties.split(','))} hubs")
+    print(f"{len(q_list)} surnames x {len(args.counties.split(','))} hubs", flush=True)
 
     grand = 0
     with CDP() as b:
@@ -246,6 +246,7 @@ def main():
                 continue
             fn = JS_SEARCH % (SITEKEY, hub.split("/")[0])
 
+            giveup_streak = 0
             for q in q_list:
                 # log key is namespaced ("<COUNTY>/tdh") — the plain county
                 # keys belong to the taxrecords-nj walk (CAMDEN/SOMERSET are
@@ -266,10 +267,10 @@ def main():
                         msg = (raw or {}).get("err") or "no-response"
                         if bot_retries < 4:
                             bot_retries += 1
-                            print(f"  {county} {q}: '{msg}' retry {bot_retries}")
+                            print(f"  {county} {q}: '{msg}' retry {bot_retries}", flush=True)
                             time.sleep(20 * bot_retries)
                             continue
-                        print(f"  {county} {q}: '{msg}' GIVING UP")
+                        print(f"  {county} {q}: '{msg}' GIVING UP", flush=True)
                         gave_up = True
                         break
                     docs = raw["docs"]
@@ -316,8 +317,18 @@ def main():
                     # do NOT log — a give-up row would look "done" to the
                     # resume check and silently skip the surname forever;
                     # the next pass retries it
+                    giveup_streak += 1
+                    if giveup_streak >= 6:
+                        # recaptcha score has rotted — grinding on just burns
+                        # 4+ min/surname for nothing. Exit nonzero: the runner
+                        # restarts us with a fresh Chrome warm-up cycle.
+                        print(f"{county}: {giveup_streak} consecutive give-ups — exiting for Chrome restart",
+                              flush=True)
+                        con.close()
+                        sys.exit(2)
                     time.sleep(60)
                     continue
+                giveup_streak = 0
                 con.execute("INSERT OR REPLACE INTO nj_fetch_log VALUES (?,?,?,?,datetime('now'))",
                             (f"{county}/tdh", q, total, stored))
                 con.commit()
