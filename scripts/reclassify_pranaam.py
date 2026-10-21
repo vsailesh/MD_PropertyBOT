@@ -77,6 +77,10 @@ def main():
         print(f"{tag}: rescue candidates {len(rows_b)}, veto candidates "
               f"{len(rows_a)}", flush=True)
         flips_up, flips_down = 0, 0
+        # md properties table predates is_indian/category — it carries
+        # predicted_race/sub_category instead (see scripts/md_reclassify.py)
+        ind_col = "is_indian=1, " if tag != "md" else "predicted_race='Indian', "
+        cat_col = "category" if tag != "md" else "sub_category"
         if rows_b:
             scores = score_batch([n for _, n in rows_b])
             for keys, name in rows_b:
@@ -84,8 +88,8 @@ def main():
                     flips_up += 1
                     if not args.dry_run:
                         con.execute(
-                            f"UPDATE {table} SET is_hindu=1, is_indian=1, "
-                            "category='Hindu/Sikh' WHERE "
+                            f"UPDATE {table} SET is_hindu=1, {ind_col}"
+                            f"{cat_col}='Hindu/Sikh' WHERE "
                             + " AND ".join(f"{c}=?" for c in keycols), keys)
         if rows_a:
             scores = score_batch([n for _, n in rows_a])
@@ -94,8 +98,8 @@ def main():
                     flips_down += 1
                     if not args.dry_run:
                         con.execute(
-                            f"UPDATE {table} SET is_hindu=0, is_indian=1, "
-                            "category='Muslim' WHERE "
+                            f"UPDATE {table} SET is_hindu=0, {ind_col}"
+                            f"{cat_col}='Muslim' WHERE "
                             + " AND ".join(f"{c}=?" for c in keycols), keys)
         if not args.dry_run:
             con.commit()
