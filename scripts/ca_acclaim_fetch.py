@@ -125,6 +125,16 @@ GRID_ROWS = """(()=>{
   return out.join('\\n');
 })()"""
 
+GRID_FIRST_DOC = """(()=>{
+  const cands=[...document.querySelectorAll('table')].filter(e=>e.innerHTML.includes('checkIsPurchased'));
+  const tbl=cands.sort((a,b)=>a.innerHTML.length-b.innerHTML.length)[0];
+  if(!tbl) return '';
+  const tr=tbl.querySelector('tbody tr');
+  if(!tr) return '';
+  const tds=[...tr.querySelectorAll('td')].map(td=>td.innerText.trim());
+  return tds.length>10?(tds[8]||''):'';
+})()"""
+
 PAGER_INFO = """(()=>{
   const disp=document.body.innerText.match(/Displaying items (\\d+) - (\\d+) of (\\d+)/);
   const next=document.querySelector('.t-arrow-next');
@@ -157,44 +167,51 @@ def parse_rows(raw, surname):
 def one_query(tab, surname, y0, y1, conn, pace):
     """Run one (surname, year-range) search; returns (groups, nrows)."""
     to = f"12/31/{y1}" if y1 < time.localtime().tm_year else time.strftime("%m/%d/%Y")
-    tab.nav(f"{BASE}/search/SearchTypeName", 5)
-    for _ in range(2):
-        r = tab.ev(FILL % (surname, f"1/1/{y0}", to))
-        if r == "set":
-            break
+    r = tab.ev(FILL % (surname, f"1/1/{y0}", to))
+    if r != "set":
         if r == "toc":
-            time.sleep(4)
-        else:
-            tab.nav(f"{BASE}/search/SearchTypeName", 6)
-    else:
-        raise RuntimeError(f"form fill failed: {r}")
+            time.sleep(3)
+            r = tab.ev(FILL % (surname, f"1/1/{y0}", to))
+        if r != "set":
+            tab.nav(f"{BASE}/search/SearchTypeName", 5)
+            r = tab.ev(FILL % (surname, f"1/1/{y0}", to))
+        if r != "set":
+            raise RuntimeError(f"form fill failed: {r}")
+    first_doc_before = tab.ev(GRID_FIRST_DOC)
     tab.ev("document.getElementById('btnSearch').click()")
-    time.sleep(6)
-    # prename window?
+    # poll: treeview, or a CHANGED grid (stale grid persists between queries)
     groups = 0
-    for _ in range(3):
-        pre = tab.ev("(()=>{const tv=document.getElementById('NameListTreeView'); return tv?tv.innerText.length:0;})()")
+    deadline = time.time() + 15
+    state = "quiet"
+    while time.time() < deadline:
+        pre = tab.ev("(()=>{const tv=document.getElementById('NameListTreeView'); return tv&&tv.offsetParent?tv.innerText.length:0;})()")
         if pre and pre > 0:
-            groups = tab.ev("""(()=>{return document.querySelectorAll('#NameListTreeView input[name$=".Checked"]').length;})()""") or 0
-            if groups > 475:
-                return ("SPLIT", 0)
-            r = tab.ev(PREENAME_DONE)
-            if r == "nodone":
-                return ("SPLIT", 0)
-            time.sleep(6)
+            state = "pre"
             break
+        fd = tab.ev(GRID_FIRST_DOC)
+        if fd != first_doc_before:
+            state = "grid"
+            break
+        time.sleep(1.2)
+    if state == "pre":
+        groups = tab.ev("""(()=>{return document.querySelectorAll('#NameListTreeView input[name$=".Checked"]').length;})()""") or 0
+        if groups > 475:
+            return ("SPLIT", 0)
+        r = tab.ev(PREENAME_DONE)
+        if r == "nodone":
+            return ("SPLIT", 0)
         time.sleep(3)
-    # results may still be loading
+        for _ in range(10):
+            if tab.ev(GRID_ROWS):
+                break
+            time.sleep(1.2)
     total_rows = []
-    for _ in range(8):
-        raw = tab.ev(GRID_ROWS)
-        if raw:
-            break
-        time.sleep(3)
     page = 0
     while True:
         raw = tab.ev(GRID_ROWS)
         rows = parse_rows(raw, surname)
+        if page == 0 and not rows:
+            break  # no (or stale) results for this surname — never page stale grids
         if rows:
             conn.executemany(
                 "INSERT OR IGNORE INTO parties (doc_num,record_date,doc_type,party_type,name,cross_party,query_surname) "
@@ -293,6 +310,8 @@ def one_query_half(tab, surname, y, conn, pace):
         while True:
             raw = tab.ev(GRID_ROWS)
             rows = parse_rows(raw, surname)
+            if page == 0 and not rows:
+                break  # stale/empty grid guard
             if rows:
                 conn.executemany(
                     "INSERT OR IGNORE INTO parties (doc_num,record_date,doc_type,party_type,name,cross_party,query_surname) "
