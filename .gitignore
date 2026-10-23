@@ -50,3 +50,4 @@ logs/
 data/.sdat_clearance.json
 .playwright-mcp/
 data/yolov8n.onnx
+data/*.db-journal
