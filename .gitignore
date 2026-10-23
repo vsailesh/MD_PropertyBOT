@@ -49,3 +49,4 @@ logs/
 # harvested CF clearance cookies (short-lived secret artifact)
 data/.sdat_clearance.json
 .playwright-mcp/
+data/yolov8n.onnx

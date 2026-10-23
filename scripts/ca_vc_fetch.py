@@ -55,8 +55,7 @@ CREATE TABLE IF NOT EXISTS fetch_log (
 class Tab:
     def __init__(self):
         tabs = json.load(urllib.request.urlopen(f"{CDP}/json"))
-        tab = next((t for t in tabs if "venturacounty" in (t.get("url") or "")
-                    or "selfservice" in (t.get("url") or "")), None)
+        tab = next((t for t in tabs if "ventura" in (t.get("url") or "")), None)
         if not tab:
             req = urllib.request.Request(f"{CDP}/json/new?{SEARCH}", method="PUT")
             tab = json.load(urllib.request.urlopen(req))
