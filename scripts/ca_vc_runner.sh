@@ -3,6 +3,7 @@
 # profile /tmp/claude-501/oc_recon_profile). rc=2 = reCAPTCHA gate returned ->
 # run the fully-local solver (ca_captcha_auto.py), then continue.
 cd /Volumes/HulkBuster/Documents/Agents/maryland-property-agent || exit 1
+FAILS=0
 LOG=/tmp/ca_vc.log
 CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 start_chrome() {
@@ -24,8 +25,12 @@ for i in $(seq 1 200); do
     src=$?
     sleep 3
     if [ $src -ne 0 ]; then
-      echo "solver rc=$src -> fresh chrome $(date)" >> "$LOG"
-      pkill -f "remote-debugging-port=9226"; sleep 8
+      FAILS=$((FAILS + 1))
+      BSECS=$((60 * FAILS)); [ $BSECS -gt 600 ] && BSECS=600
+      echo "solver rc=$src fail#$FAILS -> backoff ${BSECS}s $(date)" >> "$LOG"
+      pkill -f "remote-debugging-port=9226"; sleep $BSECS
+    else
+      FAILS=0
     fi
     continue
   fi

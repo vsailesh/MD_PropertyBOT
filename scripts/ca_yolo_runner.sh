@@ -1,0 +1,39 @@
+#!/bin/bash
+# resume-aware runner for scripts/ca_yolo_fetch.py (Yolo Tyler,
+# port 9242, profile /tmp/claude-501/yolo_profile). Disclaimer gate =
+# invisible recaptcha (plain accept). rc=2 -> local solver fallback.
+cd /Volumes/HulkBuster/Documents/Agents/maryland-property-agent || exit 1
+FAILS=0
+LOG=/tmp/ca_yolo.log
+CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+start_chrome() {
+  if ! curl -s http://localhost:9242/json/version >/dev/null 2>&1; then
+    "$CHROME" --remote-debugging-port=9242 "--remote-allow-origins=*" \
+      --user-data-dir=/tmp/claude-501/yolo_profile \
+      --no-first-run --no-default-browser-check about:blank >/tmp/yolo9242_chrome.log 2>&1 &
+    sleep 5
+  fi
+}
+for i in $(seq 1 200); do
+  start_chrome
+  ./venv/bin/python scripts/ca_yolo_fetch.py --years "${1:-1965-2026}" >> "$LOG" 2>&1
+  rc=$?
+  if [ $rc -eq 0 ]; then echo "DONE rc=0 $(date)" >> "$LOG"; break; fi
+  if [ $rc -eq 2 ]; then
+    echo "CAPTCHA rc=2 -> local solver $(date)" >> "$LOG"
+    ./venv/bin/python scripts/ca_captcha_auto.py 9242 >> "$LOG" 2>&1
+    src=$?
+    sleep 3
+    if [ $src -ne 0 ]; then
+      FAILS=$((FAILS + 1))
+      BSECS=$((60 * FAILS)); [ $BSECS -gt 600 ] && BSECS=600
+      echo "solver rc=$src fail#$FAILS -> backoff ${BSECS}s $(date)" >> "$LOG"
+      pkill -f "remote-debugging-port=9242"; sleep $BSECS
+    else
+      FAILS=0
+    fi
+    continue
+  fi
+  echo "RESTART $i (rc=$rc) $(date)" >> "$LOG"
+  pkill -f "remote-debugging-port=9242"; sleep 10
+done

@@ -9,6 +9,7 @@ challenge TTL never bites.
 Usage: ca_captcha_auto.py [port]   (default 9228, SB profile chrome)
 """
 import base64
+import fcntl
 import json
 import os
 import shutil
@@ -184,13 +185,47 @@ def solve_round():
     return sorted(tiles), target
 
 
+def accept_disclaimer(w):
+    """Click the Accept button once a token exists, then report."""
+    btn = w.ev("""(()=>{
+      const b=[...document.querySelectorAll('input[type=submit],button')].find(e=>e.offsetParent&&/accept/i.test(e.value||e.innerText));
+      if(!b) return '';
+      b.scrollIntoView({block:'center'});
+      const rc=b.getBoundingClientRect();
+      return JSON.stringify([rc.x+rc.width/2, rc.y+rc.height/2]);
+    })()""")
+    if btn:
+        bc = json.loads(btn)
+        w.click(*bc)
+        time.sleep(6)
+    print("URL:", w.ev("location.href"), flush=True)
+    print("SOLVED", flush=True)
+
+
 def main():
+    # serialize solver runs globally — several runners hitting reCAPTCHA
+    # challenges from one IP at once trips Google's anchor->challenge
+    # rate limit (anchor click silently ignored, "no challenge widget")
+    lock = open("/tmp/captcha_solver.lock", "w")
+    deadline = time.time() + 900
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.time() > deadline:
+                print("solver lock timeout — another instance holds it", flush=True)
+                sys.exit(4)
+            time.sleep(5)
     w = WS()
     for attempt in range(30):
         tok = w.token()
         if tok and tok > 200:
+            # token already present (earlier run solved the challenge but
+            # died before accepting): accept instead of falling to 'gave up'
             print("TOKEN", tok, flush=True)
-            break
+            accept_disclaimer(w)
+            return
         v = w.open_challenge()
         if not v:
             print("no challenge widget", flush=True)
@@ -226,20 +261,7 @@ def main():
         tok = w.token()
         print(f"[{attempt}] {target} tiles={tiles} token={tok}", flush=True)
         if tok and tok > 200:
-            # accept disclaimer
-            btn = w.ev("""(()=>{
-              const b=[...document.querySelectorAll('input[type=submit],button')].find(e=>e.offsetParent&&/accept/i.test(e.value||e.innerText));
-              if(!b) return '';
-              b.scrollIntoView({block:'center'});
-              const rc=b.getBoundingClientRect();
-              return JSON.stringify([rc.x+rc.width/2, rc.y+rc.height/2]);
-            })()""")
-            if btn:
-                bc = json.loads(btn)
-                w.click(*bc)
-                time.sleep(6)
-            print("URL:", w.ev("location.href"), flush=True)
-            print("SOLVED", flush=True)
+            accept_disclaimer(w)
             return
         time.sleep(1.0)
     print("gave up", flush=True)

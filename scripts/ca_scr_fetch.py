@@ -151,10 +151,10 @@ def parse_body(body, surname):
             return out
 
         for n in names(g.group(1) if g else ""):
-            if n.startswith(surname):
+            if n.split()[0] == surname:
                 rows.append((doc, date, doctype, "GRANTOR", n, surname))
         for n in names(ge.group(1) if ge else ""):
-            if n.startswith(surname):
+            if n.split()[0] == surname:
                 rows.append((doc, date, doctype, "GRANTEE", n, surname))
     return rows
 
