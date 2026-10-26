@@ -12,6 +12,7 @@ data/*.xlsx
 !data/Hindu_Origin_Owners.xlsx
 !data/Hindu_Origin_Owners_Mapped.xlsx
 !data/TX_Hindu_Owners.xlsx
+!data/CA_Hindu_Owners.xlsx
 !data/NJ_Hindu_Owners.xlsx
 
 # IDEs
