@@ -13,9 +13,10 @@ Tyler self-service platform, same family as Ventura but:
     Results'; blocks: <docnum> • TYPE / Recording Date / date-time /
     Grantor (n) / names / Grantee (n) / names
 
-Disclaimer reCAPTCHA v2: solved ONCE per session via
-scripts/ca_captcha_auto.py (fully-local YOLOv8n+OCR loop); cookie
-persists while runner keeps chrome alive. rc=2 = gate returned.
+Disclaimer gate: NO captcha (no grecaptcha script on the page) — plain
+#submitDisclaimerAccept click passes; fetcher retries it 3x before
+falling back to rc=2 solver path (session cookie persists while chrome
+stays alive).
 
 DB: data/ca_tulare_deeds.db (parties + fetch_log, resume-safe)
 """
@@ -162,10 +163,25 @@ def save_rows(conn, rows):
             "VALUES (?,?,?,?,?,?)", rows)
 
 
+ACCEPT_JS = """(()=>{const b=document.getElementById('submitDisclaimerAccept');
+  if(b&&b.offsetParent){b.click(); return 1;} return 0;})()"""
+
+
 def one_query(tab, surname, y, conn, pace):
     tab.nav(SEARCH, 7)
+    # disclaimer gate has NO captcha on Tulare (no grecaptcha script at
+    # all): plain Accept click passes — only bail to solver if it won't
+    for _ in range(3):
+        body = tab.ev("document.body.innerText") or ""
+        if "Disclaimer" in body and "I Accept" in body:
+            tab.ev(ACCEPT_JS)
+            time.sleep(6)
+        elif tab.ev("(()=>{return document.getElementById('field_BothNamesID')?1:0;})()"):
+            break
+        tab.nav(SEARCH, 7)
     body = tab.ev("document.body.innerText") or ""
-    if "Disclaimer" in body and "I Accept" in body:
+    if "Disclaimer" in body and "I Accept" in body and not tab.ev(
+            "(()=>{return document.getElementById('field_BothNamesID')?1:0;})()"):
         return ("CAPTCHA", 0)
     # clear any previous chips/selections
     if "Total Results" in body or tab.ev(
