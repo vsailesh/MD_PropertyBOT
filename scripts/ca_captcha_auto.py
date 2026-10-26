@@ -100,6 +100,10 @@ class WS:
     def open_challenge(self):
         v = self.bframe()
         if not v or v[1] <= 0:
+            # stale widget (page sat loaded for minutes -> anchor click
+            # silently dead): reload once, then click the fresh anchor
+            self.cmd("Page.reload", {"ignoreCache": False})
+            time.sleep(6)
             a = self.ev(ANCHOR_JS)
             if not a:
                 return None
@@ -158,6 +162,9 @@ def solve_round():
     print("  OCR:", txt.strip()[:70], flush=True)
     print("  DET:", det_s[:200], flush=True)
     if not target:
+        # "" = blank shot (dead challenge); "?" = live grid, unknown word
+        if not txt.strip() and not dets:
+            return None, ""
         return None, "?"
     wanted = SYN[target]
     GX, GY = grid_geometry()
@@ -233,6 +240,15 @@ def main():
         w.shot(v)
         tiles, target = solve_round()
         if not tiles:
+            # blank shot (challenge died, bframe collapsed): exit fast
+            # instead of grinding 30 refresh rounds on nothing
+            if target == "":
+                globals()["_blank"] = globals().get("_blank", 0) + 1
+                if globals()["_blank"] >= 2:
+                    print("challenge died (blank shots)", flush=True)
+                    sys.exit(5)
+            else:
+                globals()["_blank"] = 0
             # unknown target or no tiles: hit reload (bottom-left icon),
             # next round; bail if the grid stops changing
             w.click(v[0] + 30, v[1] + v[3] - 28)

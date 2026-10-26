@@ -26,6 +26,12 @@ for i in $(seq 1 200); do
     sleep 3
     if [ $src -ne 0 ]; then
       FAILS=$((FAILS + 1))
+      if [ $FAILS -ge 3 ]; then
+        echo "solver failed x$FAILS -> wipe profile (risk-flagged) $(date)" >> "$LOG"
+        pkill -f "remote-debugging-port=9234"; sleep 5
+        rm -rf /tmp/claude-501/sbcrec_profile
+        FAILS=0
+      fi
       BSECS=$((60 * FAILS)); [ $BSECS -gt 600 ] && BSECS=600
       echo "solver rc=$src fail#$FAILS -> backoff ${BSECS}s $(date)" >> "$LOG"
       pkill -f "remote-debugging-port=9234"; sleep $BSECS
