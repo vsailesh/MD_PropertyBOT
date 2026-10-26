@@ -32,11 +32,15 @@ CDP = f"http://localhost:{PORT}"
 SHOT = f"/tmp/tyler_auto_{PORT}.png"
 
 # bootstrap: /tmp is wiped on reboot — restore model + build OCR binary
+# (also rebuild when the source is newer than the binary)
 if not os.path.exists("/tmp/yolov8n.onnx") and os.path.exists(f"{ROOT}/data/yolov8n.onnx"):
     shutil.copyfile(f"{ROOT}/data/yolov8n.onnx", "/tmp/yolov8n.onnx")
-if not os.path.exists("/tmp/rc_ocr"):
+_ocr_src = f"{ROOT}/scripts/rc_ocr.swift"
+if not os.path.exists("/tmp/rc_ocr") or (
+        os.path.exists(_ocr_src) and
+        os.path.getmtime(_ocr_src) > os.path.getmtime("/tmp/rc_ocr")):
     subprocess.run(["swiftc", "-O", "-o", "/tmp/rc_ocr",
-                    f"{ROOT}/scripts/rc_ocr.swift"], check=False)
+                    _ocr_src], check=False)
 SESS = ort.InferenceSession("/tmp/yolov8n.onnx",
                             providers=["CPUExecutionProvider"])
 
@@ -150,8 +154,11 @@ def grid_geometry():
 
 def solve_round():
     """Returns list of (c,r) tiles + target word for current SHOT."""
-    txt = subprocess.run(["/tmp/rc_ocr", SHOT], capture_output=True,
-                         text=True).stdout.lower()
+    try:
+        txt = subprocess.run(["/tmp/rc_ocr", SHOT], capture_output=True,
+                             text=True, timeout=15).stdout.lower()
+    except subprocess.TimeoutExpired:
+        txt = ""  # Vision backend wedged (textunderstandingd crash)
     target = ""
     for w in SYN:
         if w in txt and len(w) > len(target):

@@ -10,7 +10,10 @@ guard CommandLine.arguments.count > 1,
 }
 let H = CGFloat(cg.height)
 let req = VNRecognizeTextRequest()
-req.recognitionLevel = .accurate
+// .accurate routes through textunderstandingd, which crashes daily on
+// this machine and leaves the request hanging forever; .fast is
+// CPU-local and reads the blue instruction banner just fine
+req.recognitionLevel = .fast
 // instruction band: top 240px of an 800x1160 bframe shot
 req.regionOfInterest = CGRect(x: 0, y: 1 - 240 / H, width: 1, height: 240 / H)
 let handler = VNImageRequestHandler(cgImage: cg, options: [:])
