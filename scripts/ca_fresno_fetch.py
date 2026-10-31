@@ -165,6 +165,9 @@ def save_rows(conn, rows):
 def one_query(tab, surname, y, conn, pace):
     tab.nav(SEARCH, 7)
     body = tab.ev("document.body.innerText") or ""
+    if "confirm you are human" in body or "security check" in body:
+        print("WAF gate hit — run ca_waf_solver, aborting", flush=True)
+        sys.exit(3)
     if "Disclaimer" in body and "I Accept" in body:
         return ("CAPTCHA", 0)
     # clear any previous chips/selections
