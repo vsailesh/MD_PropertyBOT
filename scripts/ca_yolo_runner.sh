@@ -21,7 +21,7 @@ for i in $(seq 1 200); do
   if [ $rc -eq 0 ]; then echo "DONE rc=0 $(date)" >> "$LOG"; break; fi
   if [ $rc -eq 2 ]; then
     echo "CAPTCHA rc=2 -> local solver $(date)" >> "$LOG"
-    ./venv/bin/python scripts/ca_captcha_auto.py 9242 >> "$LOG" 2>&1
+    ./venv/bin/python scripts/ca_captcha_auto.py 9242 yolocountyca-web >> "$LOG" 2>&1
     src=$?
     sleep 3
     if [ $src -ne 0 ]; then

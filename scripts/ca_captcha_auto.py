@@ -28,6 +28,7 @@ from rc_yolo import COCO, SYN, detect  # noqa: E402
 
 ROOT = __file__.rsplit("/", 2)[0]
 PORT = sys.argv[1] if len(sys.argv) > 1 else "9228"
+FILTER = sys.argv[2] if len(sys.argv) > 2 else ""
 CDP = f"http://localhost:{PORT}"
 SHOT = f"/tmp/tyler_auto_{PORT}.png"
 
@@ -66,8 +67,16 @@ class WS:
 
     def connect(self):
         tabs = json.load(urllib.request.urlopen(f"{CDP}/json"))
-        tab = next(t for t in tabs if t.get("type") == "page"
-                   and (t.get("url") or "").startswith("http"))
+        # prefer the tab whose URL matches the county host — chrome
+        # accumulates extra tabs and tabs[0] is often the wrong one
+        # (solver then sees "no challenge widget" on a captcha-less page)
+        tab = next((t for t in tabs if t.get("type") == "page"
+                    and FILTER in (t.get("url") or "")
+                    and (t.get("url") or "").startswith("http")), None) \
+            if FILTER else None
+        if not tab:
+            tab = next(t for t in tabs if t.get("type") == "page"
+                       and (t.get("url") or "").startswith("http"))
         self.ws = websocket.create_connection(
             tab["webSocketDebuggerUrl"], timeout=90, origin=f"http://localhost:{PORT}")
         self.n = 0
@@ -104,8 +113,22 @@ class WS:
     def open_challenge(self):
         v = self.bframe()
         if not v or v[1] <= 0:
+            a = self.ev(ANCHOR_JS)
+            if not a:
+                # no anchor at all (wrong tab / widget never rendered)
+                return None
+            a = json.loads(a)
+            self.click(a[0] + 30, a[1] + a[3] / 2)
+            for _ in range(12):
+                time.sleep(1)
+                v = self.bframe()
+                if v and v[1] > 0:
+                    break
+        if not v or v[1] <= 0:
             # stale widget (page sat loaded for minutes -> anchor click
-            # silently dead): reload once, then click the fresh anchor
+            # silently dead): reload for a fresh anchor and click again
+            # (some brands redirect disclaimer->home on reload, so this
+            # is a fallback, never the first move)
             self.cmd("Page.reload", {"ignoreCache": False})
             time.sleep(6)
             a = self.ev(ANCHOR_JS)

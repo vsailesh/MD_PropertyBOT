@@ -19,9 +19,30 @@ for i in $(seq 1 200); do
   ./venv/bin/python scripts/ca_slo_fetch.py --years "${1:-2015-2026}" >> "$LOG" 2>&1
   rc=$?
   if [ $rc -eq 0 ]; then echo "DONE rc=0 $(date)" >> "$LOG"; break; fi
+  if [ $rc -eq 3 ]; then
+    echo "WAF rc=3 -> waf solver $(date)" >> "$LOG"
+    ./venv/bin/python scripts/ca_waf_solver.py 9239 https://sanluisobispocountyca-web.tylerhost.net/SLOWeb/search/DOCSEARCH262S3 >> "$LOG" 2>&1
+    src=$?
+    sleep 3
+    if [ $src -ne 0 ]; then
+      FAILS=$((FAILS + 1))
+      if [ $FAILS -ge 3 ]; then
+        echo "waf solver failed x$FAILS -> wipe profile $(date)" >> "$LOG"
+        pkill -f "remote-debugging-port=9239"; sleep 5
+        rm -rf /tmp/claude-501/slo_profile
+        FAILS=0
+      fi
+      BSECS=$((60 * FAILS)); [ $BSECS -gt 600 ] && BSECS=600
+      echo "solver rc=$src fail#$FAILS -> backoff ${BSECS}s $(date)" >> "$LOG"
+      pkill -f "remote-debugging-port=9239"; sleep $BSECS
+    else
+      FAILS=0
+    fi
+    continue
+  fi
   if [ $rc -eq 2 ]; then
     echo "CAPTCHA rc=2 -> local solver $(date)" >> "$LOG"
-    ./venv/bin/python scripts/ca_captcha_auto.py 9239 >> "$LOG" 2>&1
+    ./venv/bin/python scripts/ca_captcha_auto.py 9239 sanluisobispo >> "$LOG" 2>&1
     src=$?
     sleep 3
     if [ $src -ne 0 ]; then

@@ -162,9 +162,21 @@ def save_rows(conn, rows):
             "VALUES (?,?,?,?,?,?)", rows)
 
 
+DISMISS_JS = """(()=>{
+  // Tyler session-expiry modal overlays the page and eats coordinate
+  // clicks; continue the session to clear it
+  const b=document.querySelector('[id*="session-continue"]');
+  if(b&&b.offsetParent){b.click(); return 1;} return 0;
+})()"""
+
+
 def one_query(tab, surname, y, conn, pace):
     tab.nav(SEARCH, 7)
+    tab.ev(DISMISS_JS)
     body = tab.ev("document.body.innerText") or ""
+    if "confirm you are human" in body or "security check" in body:
+        print("WAF gate hit — run ca_waf_solver, aborting", flush=True)
+        sys.exit(3)
     if "Disclaimer" in body and "I Accept" in body:
         return ("CAPTCHA", 0)
     # clear any previous chips/selections
